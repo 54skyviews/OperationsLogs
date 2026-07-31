@@ -1,0 +1,636 @@
+
+const DATA = window.OPERATIONSLOGS_MASTER_DATA;
+const DB_NAME = "OperationsLogsDB";
+const DB_VERSION = 1;
+let db;
+let currentType = "winch";
+let editingFlightId = null;
+
+const $ = id => document.getElementById(id);
+const upper = value => (value || "").trim().replace(/\s+/g, " ").toUpperCase();
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const timeHHMM = () => new Date().toLocaleTimeString("en-GB", {hour:"2-digit", minute:"2-digit"}).replace(":", "");
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = e => {
+      const database = e.target.result;
+      if (!database.objectStoreNames.contains("days")) {
+        database.createObjectStore("days", {keyPath:"date"});
+      }
+      if (!database.objectStoreNames.contains("flights")) {
+        const store = database.createObjectStore("flights", {keyPath:"id"});
+        store.createIndex("date", "date", {unique:false});
+      }
+      if (!database.objectStoreNames.contains("syncQueue")) {
+        database.createObjectStore("syncQueue", {keyPath:"id"});
+      }
+    };
+    request.onsuccess = e => { db = e.target.result; resolve(db); };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function put(storeName, value) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, "readwrite");
+    tx.objectStore(storeName).put(value);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+function get(storeName, key) {
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(storeName).objectStore(storeName).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+function getFlightsByDate(date) {
+  return new Promise((resolve, reject) => {
+    const req = db.transaction("flights").objectStore("flights").index("date").getAll(date);
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+}
+function removeFlight(id) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("flights", "readwrite");
+    tx.objectStore("flights").delete(id);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function fillList(id, values) {
+  $(id).innerHTML = values.map(v => `<option value="${String(v).replaceAll('"','&quot;')}"></option>`).join("");
+}
+function initialiseLists() {
+  fillList("nameList", DATA.names);
+  fillList("nameListWithSolo", ["SOLO", ...DATA.names]);
+  fillList("tugPilotList", DATA.tugPilots);
+  fillList("gliderList", DATA.gliders);
+  fillList("payeeList", DATA.payees);
+  $("runway").innerHTML = DATA.runways.map(v => `<option>${v}</option>`).join("");
+}
+
+function showView(id) {
+  document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
+  $(id).classList.add("active");
+  window.scrollTo(0,0);
+}
+function setDate(date) {
+  $("flyingDate").value = date;
+  $("flyingDay").value = new Date(date + "T12:00:00").toLocaleDateString("en-GB", {weekday:"long"}).toUpperCase();
+}
+function isValidHHMM(value) {
+  if (!/^\d{4}$/.test(value)) return false;
+  const h = +value.slice(0,2), m = +value.slice(2);
+  return h >= 0 && h <= 23 && m >= 0 && m <= 59;
+}
+function calcDuration(start, end) {
+  if (!isValidHHMM(start) || !isValidHHMM(end)) return "";
+  const sh = +start.slice(0,2), sm = +start.slice(2);
+  const eh = +end.slice(0,2), em = +end.slice(2);
+  let mins = (eh*60+em) - (sh*60+sm);
+  if (mins < 0) mins += 1440;
+  return mins;
+}
+function elapsedMinutes(flight) {
+  if (flight.status !== "airborne") return +flight.duration || 0;
+  const start = new Date(flight.takeoffAt || flight.createdAt);
+  return Math.max(0, Math.floor((Date.now() - start.getTime()) / 60000));
+}
+function hhmmToDate(date, hhmm) {
+  const dt = new Date(date + "T00:00:00");
+  dt.setHours(+hhmm.slice(0,2), +hhmm.slice(2), 0, 0);
+  if (dt.getTime() > Date.now() + 12*60*60*1000) dt.setDate(dt.getDate()-1);
+  return dt.toISOString();
+}
+function validateListed(inputId, validValues, allowSolo=false) {
+  const el = $(inputId);
+  const value = upper(el.value);
+  el.value = value;
+  const warning = document.querySelector(`[data-warning-for="${inputId}"]`);
+  if (!value) { warning.textContent = ""; return false; }
+  const okay = validValues.includes(value) || (allowSolo && value === "SOLO");
+  warning.textContent = okay ? "" : `⚠ ${value} IS NOT ON THE APPROVED LIST. IT MAY STILL BE USED.`;
+  return !okay;
+}
+function wireValidation() {
+  document.querySelectorAll(".uppercase").forEach(el => {
+    el.addEventListener("input", () => {
+      const pos = el.selectionStart;
+      el.value = el.value.toUpperCase();
+      try { el.setSelectionRange(pos, pos); } catch {}
+    });
+    el.addEventListener("blur", () => el.value = upper(el.value));
+  });
+  $("p1").addEventListener("blur", () => validateListed("p1", DATA.names));
+  $("p2").addEventListener("blur", () => validateListed("p2", DATA.names, true));
+  $("tugPilot").addEventListener("blur", () => validateListed("tugPilot", DATA.tugPilots));
+  $("glider").addEventListener("blur", () => validateListed("glider", DATA.gliders));
+  ["takeoff","landing"].forEach(id => $(id).addEventListener("input", () => {
+    $(id).value = $(id).value.replace(/\D/g,"").slice(0,4);
+    $("duration").value = calcDuration($("takeoff").value, $("landing").value);
+    $("saveFlightBtn").textContent = $("landing").value ? "SAVE COMPLETED FLIGHT" : "SAVE AS AIRBORNE";
+  }));
+}
+
+async function loadDay() {
+  const day = await get("days", $("flyingDate").value);
+  if (day) {
+    $("runway").value = day.runway || DATA.runways[0];
+    $("windDirection").value = day.windDirection || "";
+    $("windSpeed").value = day.windSpeed || "";
+  }
+  updateDashboard();
+}
+
+async function saveDay() {
+  const value = {
+    date: $("flyingDate").value,
+    day: $("flyingDay").value,
+    runway: $("runway").value,
+    windDirection: $("windDirection").value,
+    windSpeed: $("windSpeed").value,
+    modifiedAt: new Date().toISOString()
+  };
+  await put("days", value);
+  alert("FLYING DAY SAVED ON THIS DEVICE");
+}
+function openEntry(type) {
+  editingFlightId = null;
+  currentType = type;
+  $("entryTitle").textContent = type === "winch" ? "New Winch Flight" : "New Aerotow Flight";
+  $("aerotowOnly").classList.toggle("visible", type === "aerotow");
+  $("flightForm").reset();
+  $("p2").value = "";
+  $("formMessage").textContent = "";
+  $("saveFlightBtn").textContent = "SAVE AS AIRBORNE";
+  document.querySelectorAll(".warning-text").forEach(x => x.textContent = "");
+  showView("entryView");
+}
+async function saveFlight(e) {
+  e.preventDefault();
+  const takeoff = $("takeoff").value, landing = $("landing").value;
+  if (!isValidHHMM(takeoff)) {
+    $("formMessage").textContent = "ENTER A VALID FOUR-DIGIT TAKE-OFF TIME.";
+    return;
+  }
+  if (landing && !isValidHHMM(landing)) {
+    $("formMessage").textContent = "ENTER A VALID FOUR-DIGIT LANDING TIME OR LEAVE IT BLANK.";
+    return;
+  }
+
+  let p2Value = upper($("p2").value);
+  if (!p2Value) {
+    const isSolo = await askYesNo("P2 IS BLANK. IS THIS A SOLO FLIGHT?");
+    if (isSolo) {
+      p2Value = "SOLO";
+      $("p2").value = "SOLO";
+    } else {
+      $("p2").focus();
+      $("formMessage").textContent = "ENTER P2 OR SELECT SOLO.";
+      return;
+    }
+  }
+
+  const warnings = [];
+  if (validateListed("glider", DATA.gliders)) warnings.push("UNLISTED GLIDER");
+  if (validateListed("p1", DATA.names)) warnings.push("UNLISTED P1");
+  if (validateListed("p2", DATA.names, true)) warnings.push("UNLISTED P2");
+  if (currentType === "aerotow" && validateListed("tugPilot", DATA.tugPilots)) warnings.push("UNLISTED TUG PILOT");
+
+  const date = $("flyingDate").value;
+  const existing = await getFlightsByDate(date);
+  const sameGliderAirborne = existing.find(f =>
+    f.status === "airborne" &&
+    upper(f.glider) === upper($("glider").value) &&
+    f.id !== editingFlightId
+  );
+  if (sameGliderAirborne && !confirm(`${upper($("glider").value)} IS ALREADY SHOWN AS AIRBORNE. SAVE ANOTHER OPEN FLIGHT?`)) return;
+
+  const now = new Date().toISOString();
+  const status = landing ? "completed" : "airborne";
+  const duration = landing ? calcDuration(takeoff, landing) : "";
+
+  let flight;
+  if (editingFlightId) {
+    flight = await get("flights", editingFlightId);
+    if (!flight) {
+      $("formMessage").textContent = "THE FLIGHT COULD NOT BE FOUND.";
+      return;
+    }
+  } else {
+    const id = `${currentType === "winch" ? "WL" : "AT"}-${date.replaceAll("-","")}-${crypto.randomUUID()}`;
+    flight = {
+      id,
+      createdAt: now,
+      createdOnDevice: "local"
+    };
+  }
+
+  Object.assign(flight, {
+    type: currentType,
+    date,
+    status,
+    tugReg: upper($("tugReg").value),
+    tugPilot: upper($("tugPilot").value),
+    towHeight: $("towHeight").value.trim(),
+    glider: upper($("glider").value),
+    p1: upper($("p1").value),
+    p2: p2Value,
+    payee: upper($("payee").value),
+    takeoff,
+    landing,
+    duration,
+    takeoffAt: hhmmToDate(date, takeoff),
+    landedAt: landing ? hhmmToDate(date, landing) : null,
+    remarks: upper($("remarks").value),
+    aeros: $("aeros").value.trim(),
+    officeUse: upper($("officeUse").value),
+    warnings,
+    syncStatus: "pending",
+    modifiedAt: now
+  });
+
+  await put("flights", flight);
+  await put("syncQueue", {id:flight.id, action:"upsert", queuedAt:now});
+  editingFlightId = null;
+  showView("homeView");
+  await updateDashboard();
+}
+
+async function editFlight(id) {
+  const flight = await get("flights", id);
+  if (!flight) {
+    alert("THE FLIGHT COULD NOT BE FOUND.");
+    return;
+  }
+
+  editingFlightId = id;
+  currentType = flight.type;
+  $("entryTitle").textContent = `Edit ${flight.type === "winch" ? "Winch" : "Aerotow"} Flight`;
+  $("aerotowOnly").classList.toggle("visible", flight.type === "aerotow");
+
+  $("tugReg").value = flight.tugReg || "";
+  $("tugPilot").value = flight.tugPilot || "";
+  $("towHeight").value = flight.towHeight || "";
+  $("glider").value = flight.glider || "";
+  $("p1").value = flight.p1 || "";
+  $("p2").value = flight.p2 || "";
+  $("payee").value = flight.payee || "";
+  $("takeoff").value = flight.takeoff || "";
+  $("landing").value = flight.landing || "";
+  $("duration").value = flight.duration || "";
+  $("remarks").value = flight.remarks || "";
+  $("aeros").value = flight.aeros || "";
+  $("officeUse").value = flight.officeUse || "";
+  $("formMessage").textContent = "";
+  $("saveFlightBtn").textContent = flight.status === "airborne" ? "SAVE AIRBORNE CHANGES" : "SAVE FLIGHT CHANGES";
+  document.querySelectorAll(".warning-text").forEach(x => x.textContent = "");
+  validateListed("glider", DATA.gliders);
+  validateListed("p1", DATA.names);
+  validateListed("p2", DATA.names, true);
+  if (flight.type === "aerotow") validateListed("tugPilot", DATA.tugPilots);
+  showView("entryView");
+}
+
+
+function hhmmValue(value) {
+  const text = String(value || "").replace(/\D/g, "").padStart(4, "0").slice(-4);
+  const hours = Number(text.slice(0, 2));
+  const minutes = Number(text.slice(2, 4));
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return -1;
+  return hours * 60 + minutes;
+}
+
+function operationalTimeValue(flight) {
+  if (flight.status === "airborne") return hhmmValue(flight.takeoff);
+  return hhmmValue(flight.landing || flight.takeoff);
+}
+
+async function updateDashboard() {
+  if (!db) return;
+  const flights = await getFlightsByDate($("flyingDate").value);
+  const completed = flights.filter(f => (f.status || "completed") === "completed");
+  const airborne = flights.filter(f => f.status === "airborne").sort((a, b) => operationalTimeValue(b) - operationalTimeValue(a));
+  $("winchCount").textContent = flights.filter(f => f.type === "winch").length;
+  $("aerotowCount").textContent = flights.filter(f => f.type === "aerotow").length;
+  $("minutesCount").textContent = completed.reduce((a,f) => a + (+f.duration || 0), 0);
+  $("warningCount").textContent = flights.reduce((a,f) => a + (f.warnings?.length || 0), 0);
+  $("airborneCountBadge").textContent = airborne.length;
+  $("airborneList").innerHTML = airborne.length ? airborne.map(f => `
+    <article class="airborne-card" data-airborne-id="${f.id}">
+      <h3>${f.glider} · ${f.type.toUpperCase()}</h3>
+      <p><strong>P1:</strong> ${f.p1} &nbsp; <strong>P2:</strong> ${f.p2 || "SOLO"}</p>
+      <p>Took off <strong>${f.takeoff}</strong></p>
+      <p class="elapsed">${elapsedMinutes(f)} MINUTES AIRBORNE</p>
+      <div class="airborne-actions">
+        <button type="button" class="land-btn" data-land-now="${f.id}">LAND NOW</button>
+        <button type="button" class="manual-land-btn" data-land-manual="${f.id}">ENTER TIME</button>
+      </div>
+    </article>`).join("") : '<p class="muted">No aircraft currently airborne.</p>';
+}
+async function landFlight(id, landingTime) {
+  const flight = await get("flights", id);
+  if (!flight || flight.status !== "airborne") return;
+  if (!isValidHHMM(landingTime)) {
+    alert("ENTER A VALID FOUR-DIGIT LANDING TIME.");
+    return;
+  }
+  flight.landing = landingTime;
+  flight.landedAt = hhmmToDate(flight.date, landingTime);
+  flight.duration = calcDuration(flight.takeoff, landingTime);
+  flight.status = "completed";
+  flight.modifiedAt = new Date().toISOString();
+  flight.syncStatus = "pending";
+  await put("flights", flight);
+  await put("syncQueue", {id, action:"upsert", queuedAt:new Date().toISOString()});
+  await updateDashboard();
+}
+
+function reviewSortTime(flight) {
+  return operationalTimeValue(flight);
+}
+
+async function reviewFlights() {
+  const date = $("flyingDate").value;
+  const flights = await getFlightsByDate(date);
+
+  flights.sort((a, b) => {
+    const aAirborne = a.status === "airborne" ? 1 : 0;
+    const bAirborne = b.status === "airborne" ? 1 : 0;
+    if (aAirborne !== bAirborne) return bAirborne - aAirborne;
+    return reviewSortTime(b) - reviewSortTime(a);
+  });
+
+  $("reviewDate").textContent = new Date(date+"T12:00:00").toLocaleDateString("en-GB");
+  $("flightList").innerHTML = flights.length ? flights.map((f,i) => `
+    <article class="flight-card ${f.warnings?.length ? "warning" : ""}">
+      <h3>${i+1}. ${f.type.toUpperCase()} — ${f.glider}</h3>
+      <p><strong>P1:</strong> ${f.p1} &nbsp; <strong>P2:</strong> ${f.p2 || "SOLO"}</p>
+      ${f.type === "aerotow" ? `<p><strong>TUG:</strong> ${f.tugReg} — ${f.tugPilot}</p>` : ""}
+      <p><strong>${f.takeoff}${f.landing ? "–"+f.landing : " · AIRBORNE"}</strong>${f.status === "airborne" ? ` · ${elapsedMinutes(f)} MINUTES SO FAR` : ` · ${f.duration} MINUTES`}</p>
+      ${f.remarks ? `<p>${f.remarks}</p>` : ""}
+      ${f.warnings?.length ? `<span class="badge">${f.warnings.join(" · ")}</span>` : ""}
+      <div class="review-actions">
+        <button type="button" class="edit-btn" data-edit="${f.id}">EDIT</button>
+        <button type="button" class="delete-btn" data-delete="${f.id}">DELETE</button>
+      </div>
+    </article>`).join("") : "<p>No flights recorded for this date.</p>";
+  showView("reviewView");
+}
+
+function excelXmlEscape(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+function excelCell(value, styleId = "") {
+  const style = styleId ? ` ss:StyleID="${styleId}"` : "";
+  const numeric = typeof value === "number" && Number.isFinite(value);
+  const type = numeric ? "Number" : "String";
+  return `<Cell${style}><Data ss:Type="${type}">${excelXmlEscape(value)}</Data></Cell>`;
+}
+
+function flightExportRows(flights, type) {
+  const sorted = flights
+    .filter(f => f.type === type)
+    .sort((a, b) => hhmmValue(a.takeoff) - hhmmValue(b.takeoff));
+
+  const headers = type === "winch"
+    ? ["DATE", "GLIDER", "P1", "P2", "PAYEE", "TAKE OFF", "LANDING", "TOTAL MINUTES", "REMARKS", "AEROS", "OFFICE USE", "STATUS", "WARNINGS"]
+    : ["DATE", "TUG REG", "TUG PILOT", "HEIGHT", "GLIDER", "P1", "P2", "PAYEE", "TAKE OFF", "LANDING", "TOTAL MINUTES", "REMARKS", "AEROS", "OFFICE USE", "STATUS", "WARNINGS"];
+
+  const rows = sorted.map(f => {
+    const common = [
+      f.date,
+      f.glider,
+      f.p1,
+      f.p2,
+      f.payee,
+      f.takeoff,
+      f.landing,
+      Number(f.duration) || "",
+      f.remarks,
+      f.aeros,
+      f.officeUse,
+      (f.status || "completed").toUpperCase(),
+      (f.warnings || []).join("; ")
+    ];
+    return type === "winch"
+      ? common
+      : [f.date, f.tugReg, f.tugPilot, f.towHeight, ...common.slice(1)];
+  });
+
+  return { headers, rows };
+}
+
+function excelWorksheetXml(name, headers, rows) {
+  const headerXml = `<Row>${headers.map(h => excelCell(h, "Header")).join("")}</Row>`;
+  const rowsXml = rows.map(row =>
+    `<Row>${row.map(value => excelCell(value)).join("")}</Row>`
+  ).join("");
+
+  return `
+  <Worksheet ss:Name="${excelXmlEscape(name)}">
+    <Table>
+      ${headerXml}
+      ${rowsXml}
+    </Table>
+    <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+      <FreezePanes/>
+      <FrozenNoSplit/>
+      <SplitHorizontal>1</SplitHorizontal>
+      <TopRowBottomPane>1</TopRowBottomPane>
+      <ActivePane>2</ActivePane>
+      <ProtectObjects>False</ProtectObjects>
+      <ProtectScenarios>False</ProtectScenarios>
+    </WorksheetOptions>
+  </Worksheet>`;
+}
+
+async function exportCsv() {
+  const date = $("flyingDate").value;
+  const flights = await getFlightsByDate(date);
+  if (!flights.length) {
+    alert("NO FLIGHTS TO EXPORT");
+    return;
+  }
+
+  const winch = flightExportRows(flights, "winch");
+  const aerotow = flightExportRows(flights, "aerotow");
+
+  const workbookXml = `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+  <Styles>
+    <Style ss:ID="Default" ss:Name="Normal">
+      <Alignment ss:Vertical="Bottom"/>
+      <Borders/>
+      <Font ss:FontName="Calibri" x:Family="Swiss" ss:Size="11"/>
+      <Interior/>
+      <NumberFormat/>
+      <Protection/>
+    </Style>
+    <Style ss:ID="Header">
+      <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+      <Borders>
+        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+      </Borders>
+      <Font ss:FontName="Calibri" x:Family="Swiss" ss:Size="11" ss:Bold="1" ss:Color="#FFFFFF"/>
+      <Interior ss:Color="#124D42" ss:Pattern="Solid"/>
+    </Style>
+  </Styles>
+  ${excelWorksheetXml("Winch", winch.headers, winch.rows)}
+  ${excelWorksheetXml("Aerotow", aerotow.headers, aerotow.rows)}
+</Workbook>`;
+
+  const blob = new Blob([workbookXml], {
+    type: "application/vnd.ms-excel;charset=utf-8"
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `OperationsLogs_${date}.xls`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function updateConnection() {
+  const badge = $("statusBadge");
+  badge.textContent = navigator.onLine ? "ONLINE · LOCAL SAVE" : "OFFLINE READY";
+  badge.className = "status " + (navigator.onLine ? "online" : "offline");
+}
+
+
+
+function askYesNo(message) {
+  return new Promise(resolve => {
+    const overlay = $("yesNoDialog");
+    const messageEl = $("yesNoDialogMessage");
+    const yesBtn = $("yesNoYesBtn");
+    const noBtn = $("yesNoNoBtn");
+
+    messageEl.textContent = message;
+    overlay.hidden = false;
+    yesBtn.focus();
+
+    const finish = answer => {
+      overlay.hidden = true;
+      yesBtn.removeEventListener("click", yes);
+      noBtn.removeEventListener("click", no);
+      document.removeEventListener("keydown", keyHandler);
+      resolve(answer);
+    };
+    const yes = () => finish(true);
+    const no = () => finish(false);
+    const keyHandler = event => {
+      if (event.key === "Escape") finish(false);
+    };
+
+    yesBtn.addEventListener("click", yes);
+    noBtn.addEventListener("click", no);
+    document.addEventListener("keydown", keyHandler);
+  });
+}
+
+function moveFocusWhenChosen(inputId, nextId, allowedValues = null) {
+  const input = $(inputId);
+  if (!input) return;
+  const move = () => {
+    const value = upper(input.value);
+    if (!value) return;
+    if (allowedValues && !allowedValues.some(item => upper(item) === value)) return;
+    const next = $(nextId);
+    if (next) setTimeout(() => { next.focus(); if (typeof next.select === "function") next.select(); }, 0);
+  };
+  input.addEventListener("change", move);
+  input.addEventListener("keydown", event => {
+    if (event.key === "Enter") { event.preventDefault(); move(); }
+  });
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  try {
+  initialiseLists();
+  wireValidation();
+  await openDb();
+  setDate(todayISO());
+  await loadDay();
+  updateConnection();
+
+  $("flyingDate").addEventListener("change", () => { setDate($("flyingDate").value); loadDay(); });
+  $("saveDayBtn").addEventListener("click", saveDay);
+  $("winchFlightBtn").addEventListener("click", () => openEntry("winch"));
+  $("aerotowFlightBtn").addEventListener("click", () => openEntry("aerotow"));
+  document.querySelectorAll("[data-time-target]").forEach(b => b.addEventListener("click", () => {
+    $(b.dataset.timeTarget).value = timeHHMM();
+    $("duration").value = calcDuration($("takeoff").value, $("landing").value);
+    $("saveFlightBtn").textContent = $("landing").value ? "SAVE COMPLETED FLIGHT" : "SAVE AS AIRBORNE";
+  }));
+  $("flightForm").addEventListener("submit", saveFlight);
+  moveFocusWhenChosen("p1", "p2", DATA.names);
+  moveFocusWhenChosen("p2", "payee", [...DATA.names, "SOLO"]);
+  moveFocusWhenChosen("payee", "takeoff", DATA.names);
+  $("backBtn").addEventListener("click", () => showView("homeView"));
+  $("reviewBackBtn").addEventListener("click", () => showView("homeView"));
+  $("reviewBtn").addEventListener("click", reviewFlights);
+  $("exportBtn").addEventListener("click", exportCsv);
+  $("flightList").addEventListener("click", async e => {
+    const editButton = e.target.closest("[data-edit]");
+    const deleteButton = e.target.closest("[data-delete]");
+
+    if (editButton) {
+      e.preventDefault();
+      await editFlight(editButton.dataset.edit);
+      return;
+    }
+
+    if (deleteButton && confirm("DELETE THIS FLIGHT FROM THIS DEVICE?")) {
+      e.preventDefault();
+      await removeFlight(deleteButton.dataset.delete);
+      await reviewFlights();
+      await updateDashboard();
+    }
+  });
+  $("airborneList").addEventListener("click", async e => {
+    const nowId = e.target.dataset.landNow;
+    const manualId = e.target.dataset.landManual;
+    if (nowId) await landFlight(nowId, timeHHMM());
+    if (manualId) {
+      const value = prompt("ENTER LANDING TIME AS FOUR DIGITS (HHMM):", timeHHMM());
+      if (value !== null) await landFlight(manualId, value.replace(/\D/g,"").slice(0,4));
+    }
+  });
+  setInterval(() => {
+    if ($("homeView").classList.contains("active")) updateDashboard();
+  }, 60000);
+  window.addEventListener("online", updateConnection);
+  window.addEventListener("offline", updateConnection);
+
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("service-worker.js?v=100").catch(error => {
+      console.warn("Service worker registration failed:", error);
+    });
+  }
+  } catch (error) {
+    console.error(error);
+    const message = document.getElementById("formMessage");
+    if (message) message.textContent = "APP STARTUP ERROR: " + error.message;
+    alert("OPERATIONSLOGS STARTUP ERROR: " + error.message);
+  }
+});

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#123d34">
+
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="OperationsLogs">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <meta name="description" content="Offline-first gliding club operations log">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css?v=100">
+  <title>OperationsLogs</title>
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>OperationsLogs</h1>
+      <p>Offline-first gliding operations log <span id="appVersion">v1.0</span></p>
+    </div>
+    <div id="statusBadge" class="status offline">OFFLINE READY</div>
+  </header>
+
+  <main>
+    <section id="homeView" class="view active">
+      <div class="panel">
+        <h2>Flying Day</h2>
+        <div class="form-grid">
+          <label>Date<input id="flyingDate" type="date"></label>
+          <label>Day<input id="flyingDay" type="text" readonly></label>
+          <label>Runway<select id="runway"></select></label>
+          <label>Wind direction<input id="windDirection" inputmode="numeric" maxlength="3" placeholder="350"></label>
+          <label>Wind speed (kt)<input id="windSpeed" inputmode="numeric" maxlength="2" placeholder="10"></label>
+        </div>
+        <button type="button" id="saveDayBtn" class="primary">SAVE FLYING DAY</button>
+      </div>
+
+      <div class="action-grid">
+        <button type="button" id="winchFlightBtn" class="module-button">WINCH FLIGHT</button>
+        <button type="button" id="aerotowFlightBtn" class="module-button">AEROTOW FLIGHT</button>
+        <button type="button" id="reviewBtn" class="module-button secondary">REVIEW TODAY</button>
+        <button type="button" id="exportBtn" class="module-button secondary">EXPORT EXCEL</button>
+      </div>
+
+      <div class="panel airborne-panel">
+        <div class="section-heading">
+          <h2>AIRBORNE <span id="airborneCountBadge" class="count-badge">0</span></h2>
+        </div>
+        <div id="airborneList"><p class="muted">No aircraft currently airborne.</p></div>
+      </div>
+
+      <div class="panel dashboard">
+        <h2>Today</h2>
+        <div class="stats">
+          <div><strong id="winchCount">0</strong><span>Winch</span></div>
+          <div><strong id="aerotowCount">0</strong><span>Aerotow</span></div>
+          <div><strong id="minutesCount">0</strong><span>Completed min</span></div>
+          <div><strong id="warningCount">0</strong><span>Warnings</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="entryView" class="view">
+      <button type="button" class="back-button" id="backBtn">← BACK</button>
+      <div class="panel">
+        <h2 id="entryTitle">New Flight</h2>
+        <form id="flightForm">
+          <div id="aerotowOnly" class="conditional">
+            <label>Tug registration<input id="tugReg" class="uppercase" autocomplete="off" ></label>
+            <label>Tug pilot
+              <input id="tugPilot" class="name-input uppercase" list="tugPilotList" autocomplete="off">
+              <small class="warning-text" data-warning-for="tugPilot"></small>
+            </label>
+            <label>Tow height<input id="towHeight" inputmode="numeric" ></label>
+          </div>
+
+          <label>Glider registration
+            <input id="glider" class="uppercase" list="gliderList" autocomplete="off" required>
+            <small class="warning-text" data-warning-for="glider"></small>
+          </label>
+          <label>P1
+            <input id="p1" class="name-input uppercase" list="nameList" autocomplete="off" required>
+            <small class="warning-text" data-warning-for="p1"></small>
+          </label>
+          <label>P2
+            <input id="p2" class="name-input uppercase" list="nameListWithSolo" autocomplete="off">
+            <small class="warning-text" data-warning-for="p2"></small>
+          </label>
+          <label>Payee
+            <input id="payee" class="uppercase" list="payeeList" autocomplete="off">
+          </label>
+
+          <div class="time-row">
+            <label>Take-off
+              <input id="takeoff" inputmode="numeric" maxlength="4" placeholder="HHMM" required>
+              <button type="button" class="now-button" data-time-target="takeoff">TAKE OFF NOW</button>
+            </label>
+            <label>Landing
+              <input id="landing" inputmode="numeric" maxlength="4" placeholder="LEAVE BLANK IF AIRBORNE">
+              <button type="button" class="now-button" data-time-target="landing">LAND NOW</button>
+            </label>
+          </div>
+
+          <label>Total minutes<input id="duration" readonly></label>
+          <label>Remarks / voucher number<textarea id="remarks" class="uppercase" rows="3"></textarea></label>
+          <label>Aerobatic minutes<input id="aeros" inputmode="numeric"></label>
+          <label>Office use<input id="officeUse" class="uppercase"></label>
+
+          <div id="formMessage" class="form-message"></div>
+          <button type="submit" id="saveFlightBtn" class="primary">SAVE AS AIRBORNE</button>
+        </form>
+      </div>
+    </section>
+
+    <section id="reviewView" class="view">
+      <button type="button" class="back-button" id="reviewBackBtn">← BACK</button>
+      <div class="panel">
+        <h2>Flights for <span id="reviewDate"></span></h2>
+        <div id="flightList"></div>
+      </div>
+    </section>
+  </main>
+
+  <datalist id="nameList"></datalist>
+  <datalist id="nameListWithSolo"></datalist>
+  <datalist id="tugPilotList"></datalist>
+  <datalist id="gliderList"></datalist>
+  <datalist id="payeeList"></datalist>
+
+
+  <div id="yesNoDialog" class="dialog-overlay" hidden>
+    <div class="dialog-box" role="dialog" aria-modal="true" aria-labelledby="yesNoDialogMessage">
+      <p id="yesNoDialogMessage"></p>
+      <div class="dialog-actions">
+        <button type="button" id="yesNoYesBtn" class="dialog-yes">YES</button>
+        <button type="button" id="yesNoNoBtn" class="dialog-no">NO</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="data.js?v=100"></script>
+  <script src="app.js?v=100"></script>
+</body>
+</html>
