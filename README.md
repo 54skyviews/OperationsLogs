@@ -1,4 +1,4 @@
-# OperationsLogs – Prototype 2
+# OperationsLogs – Version 1.0
 
 This is an offline-first Progressive Web App generated from the supplied
 `20260719 Log Sheets.xlsx` workbook.
