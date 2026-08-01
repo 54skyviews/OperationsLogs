@@ -1,18 +1,16 @@
-const CACHE_NAME = "operationslogs-v1-0";
+const CACHE_NAME = "operationslogs-v1-1";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=100",
-  "./data.js?v=100",
-  "./app.js?v=100",
+  "./styles.css?v=110",
+  "./data.js?v=110",
+  "./app.js?v=110",
   "./manifest.webmanifest",
   "./icon.svg"
 ];
 
 self.addEventListener("install", event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL))
-  );
+  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)));
   self.skipWaiting();
 });
 
@@ -27,7 +25,6 @@ self.addEventListener("activate", event => {
 
 self.addEventListener("fetch", event => {
   const request = event.request;
-
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request)
@@ -40,16 +37,13 @@ self.addEventListener("fetch", event => {
     );
     return;
   }
-
   event.respondWith(
-    caches.match(request).then(cached => {
-      if (cached) return cached;
-      return fetch(request).then(response => {
-        if (!response || response.status !== 200 || response.type === "opaque") return response;
+    caches.match(request).then(cached => cached || fetch(request).then(response => {
+      if (response && response.status === 200 && response.type !== "opaque") {
         const copy = response.clone();
         caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
-        return response;
-      });
-    })
+      }
+      return response;
+    }))
   );
 });

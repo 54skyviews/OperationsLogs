@@ -266,3 +266,78 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+
+/* Version 1.1 administration */
+.admin-main-button {
+  grid-column: 1 / -1;
+}
+.admin-tabs {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  margin-bottom: 14px;
+}
+.admin-tab {
+  flex: 0 0 auto;
+  min-height: 42px;
+  padding: 9px 12px;
+  background: #e2ece8;
+  color: #123d34;
+}
+.admin-tab.active {
+  background: #123d34;
+  color: #fff;
+}
+.admin-add-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+.admin-add-row input {
+  margin: 0;
+}
+.admin-add-row button {
+  width: auto;
+  min-width: 92px;
+}
+.admin-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+  font-weight: 750;
+}
+.admin-row-actions {
+  display: flex;
+  gap: 7px;
+}
+.admin-row-actions button {
+  min-height: 38px;
+  padding: 8px 10px;
+}
+.inline-add-btn {
+  min-height: 30px;
+  padding: 4px 8px;
+  margin-left: 6px;
+  background: #e3ece8;
+  color: #123d34;
+  font-size: .75rem;
+  vertical-align: middle;
+}
+@media (max-width: 480px) {
+  .admin-list-row {
+    grid-template-columns: 1fr;
+  }
+  .admin-row-actions {
+    width: 100%;
+  }
+  .admin-row-actions button {
+    flex: 1;
+  }
+}

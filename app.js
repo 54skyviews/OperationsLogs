@@ -1,10 +1,11 @@
 
 const DATA = window.OPERATIONSLOGS_MASTER_DATA;
 const DB_NAME = "OperationsLogsDB";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 let db;
 let currentType = "winch";
 let editingFlightId = null;
+let currentAdminList = "names";
 
 const $ = id => document.getElementById(id);
 const upper = value => (value || "").trim().replace(/\s+/g, " ").toUpperCase();
@@ -25,6 +26,9 @@ function openDb() {
       }
       if (!database.objectStoreNames.contains("syncQueue")) {
         database.createObjectStore("syncQueue", {keyPath:"id"});
+      }
+      if (!database.objectStoreNames.contains("masterLists")) {
+        database.createObjectStore("masterLists", {keyPath:"key"});
       }
     };
     request.onsuccess = e => { db = e.target.result; resolve(db); };
@@ -47,6 +51,42 @@ function get(storeName, key) {
     req.onerror = () => reject(req.error);
   });
 }
+function remove(storeName, key) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, "readwrite");
+    tx.objectStore(storeName).delete(key);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+const MASTER_LIST_KEYS = ["names", "gliders", "tugAircraft", "tugPilots", "payees"];
+
+function cleanMasterValues(values) {
+  return [...new Set((values || []).map(upper).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "en-GB"));
+}
+
+async function loadMasterLists() {
+  for (const key of MASTER_LIST_KEYS) {
+    const saved = await get("masterLists", key);
+    const defaults = Array.isArray(DATA[key]) ? DATA[key] : [];
+    DATA[key] = cleanMasterValues(saved?.values ?? defaults);
+  }
+  if (!DATA.payees.length) DATA.payees = ["P1", "P2", "VOUCHER", "SHARE"];
+  refreshMasterDatalists();
+}
+
+async function saveMasterList(key) {
+  DATA[key] = cleanMasterValues(DATA[key]);
+  await put("masterLists", {
+    key,
+    values: DATA[key],
+    modifiedAt: new Date().toISOString()
+  });
+  refreshMasterDatalists();
+}
+
 function getFlightsByDate(date) {
   return new Promise((resolve, reject) => {
     const req = db.transaction("flights").objectStore("flights").index("date").getAll(date);
@@ -66,12 +106,16 @@ function removeFlight(id) {
 function fillList(id, values) {
   $(id).innerHTML = values.map(v => `<option value="${String(v).replaceAll('"','&quot;')}"></option>`).join("");
 }
-function initialiseLists() {
+function refreshMasterDatalists() {
   fillList("nameList", DATA.names);
   fillList("nameListWithSolo", ["SOLO", ...DATA.names]);
+  fillList("tugAircraftList", DATA.tugAircraft);
   fillList("tugPilotList", DATA.tugPilots);
   fillList("gliderList", DATA.gliders);
   fillList("payeeList", DATA.payees);
+}
+function initialiseLists() {
+  refreshMasterDatalists();
   $("runway").innerHTML = DATA.runways.map(v => `<option>${v}</option>`).join("");
 }
 
@@ -115,7 +159,20 @@ function validateListed(inputId, validValues, allowSolo=false) {
   const warning = document.querySelector(`[data-warning-for="${inputId}"]`);
   if (!value) { warning.textContent = ""; return false; }
   const okay = validValues.includes(value) || (allowSolo && value === "SOLO");
-  warning.textContent = okay ? "" : `⚠ ${value} IS NOT ON THE APPROVED LIST. IT MAY STILL BE USED.`;
+  if (okay) {
+    warning.textContent = "";
+  } else {
+    const listMap = {
+      p1: "names",
+      p2: "names",
+      glider: "gliders",
+      tugReg: "tugAircraft",
+      tugPilot: "tugPilots"
+    };
+    const listKey = listMap[inputId];
+    warning.innerHTML = `⚠ ${excelXmlEscape(value)} IS NOT ON THE APPROVED LIST. IT MAY STILL BE USED.` +
+      (listKey ? ` <button type="button" class="inline-add-btn" data-add-master="${listKey}" data-add-value="${excelXmlEscape(value)}">ADD TO LIST</button>` : "");
+  }
   return !okay;
 }
 function wireValidation() {
@@ -129,6 +186,7 @@ function wireValidation() {
   });
   $("p1").addEventListener("blur", () => validateListed("p1", DATA.names));
   $("p2").addEventListener("blur", () => validateListed("p2", DATA.names, true));
+  $("tugReg").addEventListener("blur", () => validateListed("tugReg", DATA.tugAircraft));
   $("tugPilot").addEventListener("blur", () => validateListed("tugPilot", DATA.tugPilots));
   $("glider").addEventListener("blur", () => validateListed("glider", DATA.gliders));
   ["takeoff","landing"].forEach(id => $(id).addEventListener("input", () => {
@@ -201,6 +259,7 @@ async function saveFlight(e) {
   if (validateListed("glider", DATA.gliders)) warnings.push("UNLISTED GLIDER");
   if (validateListed("p1", DATA.names)) warnings.push("UNLISTED P1");
   if (validateListed("p2", DATA.names, true)) warnings.push("UNLISTED P2");
+  if (currentType === "aerotow" && validateListed("tugReg", DATA.tugAircraft)) warnings.push("UNLISTED TUG AIRCRAFT");
   if (currentType === "aerotow" && validateListed("tugPilot", DATA.tugPilots)) warnings.push("UNLISTED TUG PILOT");
 
   const date = $("flyingDate").value;
@@ -294,7 +353,10 @@ async function editFlight(id) {
   validateListed("glider", DATA.gliders);
   validateListed("p1", DATA.names);
   validateListed("p2", DATA.names, true);
-  if (flight.type === "aerotow") validateListed("tugPilot", DATA.tugPilots);
+  if (flight.type === "aerotow") {
+    validateListed("tugReg", DATA.tugAircraft);
+    validateListed("tugPilot", DATA.tugPilots);
+  }
   showView("entryView");
 }
 
@@ -564,11 +626,88 @@ function moveFocusWhenChosen(inputId, nextId, allowedValues = null) {
   });
 }
 
+
+const ADMIN_LABELS = {
+  names: "PILOT",
+  gliders: "GLIDER",
+  tugAircraft: "TUG AIRCRAFT",
+  tugPilots: "TUG PILOT",
+  payees: "PAYEE"
+};
+
+function openAdministration(listKey = "names") {
+  currentAdminList = listKey;
+  $("adminSearch").value = "";
+  $("adminNewValue").value = "";
+  $("adminMessage").textContent = "";
+  document.querySelectorAll(".admin-tab").forEach(button => {
+    button.classList.toggle("active", button.dataset.adminList === currentAdminList);
+  });
+  renderAdminList();
+  showView("adminView");
+}
+
+function renderAdminList() {
+  const query = upper($("adminSearch").value);
+  const values = cleanMasterValues(DATA[currentAdminList])
+    .filter(value => !query || value.includes(query));
+
+  $("adminList").innerHTML = values.length ? values.map(value => `
+    <div class="admin-list-row">
+      <span>${excelXmlEscape(value)}</span>
+      <div class="admin-row-actions">
+        <button type="button" class="edit-btn" data-master-edit="${excelXmlEscape(value)}">EDIT</button>
+        <button type="button" class="delete-btn" data-master-delete="${excelXmlEscape(value)}">DELETE</button>
+      </div>
+    </div>
+  `).join("") : '<p class="muted">No matching entries.</p>';
+}
+
+async function addMasterValue(key, rawValue) {
+  const value = upper(rawValue);
+  if (!value) return false;
+  if (key === "names" && value === "SOLO") {
+    $("adminMessage").textContent = "SOLO IS ALREADY AVAILABLE AS A SPECIAL P2 ENTRY.";
+    return false;
+  }
+  if (DATA[key].includes(value)) {
+    $("adminMessage").textContent = `${value} IS ALREADY ON THE LIST.`;
+    return false;
+  }
+  DATA[key].push(value);
+  await saveMasterList(key);
+  $("adminMessage").textContent = `${value} ADDED.`;
+  return true;
+}
+
+async function editMasterValue(key, oldValue) {
+  const typed = prompt(`EDIT ${ADMIN_LABELS[key]}:`, oldValue);
+  if (typed === null) return;
+  const newValue = upper(typed);
+  if (!newValue || newValue === oldValue) return;
+  if (DATA[key].includes(newValue)) {
+    alert(`${newValue} IS ALREADY ON THE LIST.`);
+    return;
+  }
+  DATA[key] = DATA[key].map(value => value === oldValue ? newValue : value);
+  await saveMasterList(key);
+  renderAdminList();
+}
+
+async function deleteMasterValue(key, value) {
+  const okay = await askYesNo(`DELETE ${value} FROM THE ${ADMIN_LABELS[key]} LIST?`);
+  if (!okay) return;
+  DATA[key] = DATA[key].filter(item => item !== value);
+  await saveMasterList(key);
+  renderAdminList();
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   try {
   initialiseLists();
   wireValidation();
   await openDb();
+  await loadMasterLists();
   setDate(todayISO());
   await loadDay();
   updateConnection();
@@ -590,6 +729,40 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("reviewBackBtn").addEventListener("click", () => showView("homeView"));
   $("reviewBtn").addEventListener("click", reviewFlights);
   $("exportBtn").addEventListener("click", exportCsv);
+  $("adminBtn").addEventListener("click", () => openAdministration("names"));
+  $("adminBackBtn").addEventListener("click", () => showView("homeView"));
+  $("adminSearch").addEventListener("input", renderAdminList);
+  $("adminAddBtn").addEventListener("click", async () => {
+    const added = await addMasterValue(currentAdminList, $("adminNewValue").value);
+    if (added) {
+      $("adminNewValue").value = "";
+      renderAdminList();
+      $("adminNewValue").focus();
+    }
+  });
+  $("adminNewValue").addEventListener("keydown", async event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      $("adminAddBtn").click();
+    }
+  });
+  document.querySelectorAll(".admin-tab").forEach(button => {
+    button.addEventListener("click", () => openAdministration(button.dataset.adminList));
+  });
+  $("adminList").addEventListener("click", async event => {
+    const editButton = event.target.closest("[data-master-edit]");
+    const deleteButton = event.target.closest("[data-master-delete]");
+    if (editButton) await editMasterValue(currentAdminList, editButton.dataset.masterEdit);
+    if (deleteButton) await deleteMasterValue(currentAdminList, deleteButton.dataset.masterDelete);
+  });
+  document.body.addEventListener("click", async event => {
+    const button = event.target.closest("[data-add-master]");
+    if (!button) return;
+    const added = await addMasterValue(button.dataset.addMaster, button.dataset.addValue);
+    if (added) {
+      button.closest(".warning-text").textContent = "";
+    }
+  });
   $("flightList").addEventListener("click", async e => {
     const editButton = e.target.closest("[data-edit]");
     const deleteButton = e.target.closest("[data-delete]");
@@ -623,7 +796,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=100").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=110").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }

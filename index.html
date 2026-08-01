@@ -12,14 +12,14 @@
   <link rel="apple-touch-icon" href="icon.svg">
   <meta name="description" content="Offline-first gliding club operations log">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=100">
+  <link rel="stylesheet" href="styles.css?v=110">
   <title>OperationsLogs</title>
 </head>
 <body>
   <header class="app-header">
     <div>
       <h1>OperationsLogs</h1>
-      <p>Offline-first gliding operations log <span id="appVersion">v1.0</span></p>
+      <p>Offline-first gliding operations log <span id="appVersion">v1.1</span></p>
     </div>
     <div id="statusBadge" class="status offline">OFFLINE READY</div>
   </header>
@@ -43,6 +43,7 @@
         <button type="button" id="aerotowFlightBtn" class="module-button">AEROTOW FLIGHT</button>
         <button type="button" id="reviewBtn" class="module-button secondary">REVIEW TODAY</button>
         <button type="button" id="exportBtn" class="module-button secondary">EXPORT EXCEL</button>
+        <button type="button" id="adminBtn" class="module-button secondary admin-main-button">ADMINISTRATION</button>
       </div>
 
       <div class="panel airborne-panel">
@@ -69,7 +70,10 @@
         <h2 id="entryTitle">New Flight</h2>
         <form id="flightForm">
           <div id="aerotowOnly" class="conditional">
-            <label>Tug registration<input id="tugReg" class="uppercase" autocomplete="off" ></label>
+            <label>Tug registration
+              <input id="tugReg" class="uppercase" list="tugAircraftList" autocomplete="off">
+              <small class="warning-text" data-warning-for="tugReg"></small>
+            </label>
             <label>Tug pilot
               <input id="tugPilot" class="name-input uppercase" list="tugPilotList" autocomplete="off">
               <small class="warning-text" data-warning-for="tugPilot"></small>
@@ -126,10 +130,40 @@
 
   <datalist id="nameList"></datalist>
   <datalist id="nameListWithSolo"></datalist>
+  <datalist id="tugAircraftList"></datalist>
   <datalist id="tugPilotList"></datalist>
   <datalist id="gliderList"></datalist>
   <datalist id="payeeList"></datalist>
 
+
+
+    <section id="adminView" class="view">
+      <button type="button" class="back-button" id="adminBackBtn">← BACK</button>
+      <div class="panel">
+        <h2>Administration</h2>
+        <p class="muted">Lists are stored on this device and remain after app updates.</p>
+
+        <div class="admin-tabs" role="tablist">
+          <button type="button" class="admin-tab active" data-admin-list="names">PILOTS</button>
+          <button type="button" class="admin-tab" data-admin-list="gliders">GLIDERS</button>
+          <button type="button" class="admin-tab" data-admin-list="tugAircraft">TUG AIRCRAFT</button>
+          <button type="button" class="admin-tab" data-admin-list="tugPilots">TUG PILOTS</button>
+          <button type="button" class="admin-tab" data-admin-list="payees">PAYEES</button>
+        </div>
+
+        <label>Search
+          <input id="adminSearch" class="uppercase" autocomplete="off" placeholder="TYPE TO SEARCH">
+        </label>
+
+        <div class="admin-add-row">
+          <input id="adminNewValue" class="uppercase" autocomplete="off" placeholder="NEW ENTRY">
+          <button type="button" id="adminAddBtn" class="primary">ADD</button>
+        </div>
+
+        <div id="adminMessage" class="form-message"></div>
+        <div id="adminList" class="admin-list"></div>
+      </div>
+    </section>
 
   <div id="yesNoDialog" class="dialog-overlay" hidden>
     <div class="dialog-box" role="dialog" aria-modal="true" aria-labelledby="yesNoDialogMessage">
@@ -141,7 +175,7 @@
     </div>
   </div>
 
-  <script src="data.js?v=100"></script>
-  <script src="app.js?v=100"></script>
+  <script src="data.js?v=110"></script>
+  <script src="app.js?v=110"></script>
 </body>
 </html>

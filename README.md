@@ -152,3 +152,24 @@ Included:
 - Safe-area and touch-screen layout improvements.
 
 Version 1.0 is intended for operational testing on phones and tablets before multi-user synchronisation is added.
+
+
+## Version 1.1 release
+
+Version 1.1 adds local Administration for master lists:
+
+- Pilots
+- Gliders
+- Tug aircraft
+- Tug pilots
+- Payees
+
+Each list supports search, add, edit and delete. Entries are converted to BLOCK CAPITALS,
+deduplicated and sorted alphabetically.
+
+Unlisted entries during flight input now include an ADD TO LIST button. List changes are
+stored in IndexedDB on the current device and are not overwritten by future GitHub Pages
+program updates.
+
+Important limitation: Version 1.1 does not yet synchronise list changes between devices.
+Each phone or tablet maintains its own local lists until central synchronisation is added.

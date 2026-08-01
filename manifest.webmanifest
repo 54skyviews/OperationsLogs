@@ -1,7 +1,7 @@
 {
   "name": "OperationsLogs",
   "short_name": "OperationsLogs",
-  "description": "Offline-first gliding club launch-point operations log",
+  "description": "Offline-first gliding club operations log with editable master lists",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#eef4f1",

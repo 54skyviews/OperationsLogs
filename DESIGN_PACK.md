@@ -222,3 +222,18 @@ Each record provides:
 
 Saving an edited flight updates the original record and queues the change for synchronisation.
 Normal save actions do not display confirmation pop-ups.
+
+
+## Version 1.1 — Local master-list administration
+
+Administration manages Pilots, Gliders, Tug Aircraft, Tug Pilots and Payees.
+Values are stored in the local IndexedDB `masterLists` object store.
+
+Rules:
+- Values are saved in BLOCK CAPITALS.
+- Blank and duplicate values are rejected.
+- Lists are alphabetically sorted.
+- SOLO remains a special P2 option and is not stored as a pilot.
+- Removing a list entry does not alter historical flight records.
+- Unlisted flight-entry values may be promoted into the appropriate list.
+- Version 1.1 list changes are device-local; multi-device synchronisation remains future work.

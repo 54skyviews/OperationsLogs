@@ -207,6 +207,7 @@ window.OPERATIONSLOGS_MASTER_DATA = {
     "BILL YOUNG",
     "PETER ZOCHLING"
   ],
+  "tugAircraft": [],
   "tugPilots": [
     "DAVE BELL",
     "WILL BLACKBURN",
