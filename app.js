@@ -1,7 +1,7 @@
 
 const DATA = window.OPERATIONSLOGS_MASTER_DATA;
 const DB_NAME = "OperationsLogsDB";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 let db;
 let currentType = "winch";
 let editingFlightId = null;
@@ -29,6 +29,9 @@ function openDb() {
       }
       if (!database.objectStoreNames.contains("masterLists")) {
         database.createObjectStore("masterLists", {keyPath:"key"});
+      }
+      if (!database.objectStoreNames.contains("conflicts")) {
+        database.createObjectStore("conflicts", {keyPath:"id"});
       }
     };
     request.onsuccess = e => { db = e.target.result; resolve(db); };
@@ -85,6 +88,7 @@ async function saveMasterList(key) {
     modifiedAt: new Date().toISOString()
   });
   refreshMasterDatalists();
+  await syncMasterList(key);
 }
 
 function getFlightsByDate(date) {
@@ -216,7 +220,7 @@ async function saveDay() {
     modifiedAt: new Date().toISOString()
   };
   await put("days", value);
-  alert("FLYING DAY SAVED ON THIS DEVICE");
+  await queueSyncRecord("day", value.date, "upsert");
 }
 function openEntry(type) {
   editingFlightId = null;
@@ -316,7 +320,7 @@ async function saveFlight(e) {
   });
 
   await put("flights", flight);
-  await put("syncQueue", {id:flight.id, action:"upsert", queuedAt:now});
+  await queueSyncRecord("flight", flight.id, "upsert");
   editingFlightId = null;
   showView("homeView");
   await updateDashboard();
@@ -410,7 +414,7 @@ async function landFlight(id, landingTime) {
   flight.modifiedAt = new Date().toISOString();
   flight.syncStatus = "pending";
   await put("flights", flight);
-  await put("syncQueue", {id, action:"upsert", queuedAt:new Date().toISOString()});
+  await queueSyncRecord("flight", id, "upsert");
   await updateDashboard();
 }
 
@@ -452,71 +456,50 @@ function excelXmlEscape(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
-    .replaceAll("'", "&apos;");
+    .replaceAll("'", "&#39;");
 }
 
-function excelCell(value, styleId = "") {
-  const style = styleId ? ` ss:StyleID="${styleId}"` : "";
-  const numeric = typeof value === "number" && Number.isFinite(value);
-  const type = numeric ? "Number" : "String";
-  return `<Cell${style}><Data ss:Type="${type}">${excelXmlEscape(value)}</Data></Cell>`;
-}
-
-function flightExportRows(flights, type) {
+function exportRows(flights, type) {
   const sorted = flights
     .filter(f => f.type === type)
     .sort((a, b) => hhmmValue(a.takeoff) - hhmmValue(b.takeoff));
 
-  const headers = type === "winch"
-    ? ["DATE", "GLIDER", "P1", "P2", "PAYEE", "TAKE OFF", "LANDING", "TOTAL MINUTES", "REMARKS", "AEROS", "OFFICE USE", "STATUS", "WARNINGS"]
-    : ["DATE", "TUG REG", "TUG PILOT", "HEIGHT", "GLIDER", "P1", "P2", "PAYEE", "TAKE OFF", "LANDING", "TOTAL MINUTES", "REMARKS", "AEROS", "OFFICE USE", "STATUS", "WARNINGS"];
+  if (type === "winch") {
+    return sorted.map(f => ({
+      DATE: f.date,
+      GLIDER: f.glider,
+      P1: f.p1,
+      P2: f.p2,
+      PAYEE: f.payee,
+      "TAKE OFF": f.takeoff,
+      LANDING: f.landing,
+      "TOTAL MINUTES": Number(f.duration) || "",
+      REMARKS: f.remarks,
+      AEROS: f.aeros,
+      "OFFICE USE": f.officeUse,
+      STATUS: (f.status || "completed").toUpperCase(),
+      WARNINGS: (f.warnings || []).join("; ")
+    }));
+  }
 
-  const rows = sorted.map(f => {
-    const common = [
-      f.date,
-      f.glider,
-      f.p1,
-      f.p2,
-      f.payee,
-      f.takeoff,
-      f.landing,
-      Number(f.duration) || "",
-      f.remarks,
-      f.aeros,
-      f.officeUse,
-      (f.status || "completed").toUpperCase(),
-      (f.warnings || []).join("; ")
-    ];
-    return type === "winch"
-      ? common
-      : [f.date, f.tugReg, f.tugPilot, f.towHeight, ...common.slice(1)];
-  });
-
-  return { headers, rows };
-}
-
-function excelWorksheetXml(name, headers, rows) {
-  const headerXml = `<Row>${headers.map(h => excelCell(h, "Header")).join("")}</Row>`;
-  const rowsXml = rows.map(row =>
-    `<Row>${row.map(value => excelCell(value)).join("")}</Row>`
-  ).join("");
-
-  return `
-  <Worksheet ss:Name="${excelXmlEscape(name)}">
-    <Table>
-      ${headerXml}
-      ${rowsXml}
-    </Table>
-    <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
-      <FreezePanes/>
-      <FrozenNoSplit/>
-      <SplitHorizontal>1</SplitHorizontal>
-      <TopRowBottomPane>1</TopRowBottomPane>
-      <ActivePane>2</ActivePane>
-      <ProtectObjects>False</ProtectObjects>
-      <ProtectScenarios>False</ProtectScenarios>
-    </WorksheetOptions>
-  </Worksheet>`;
+  return sorted.map(f => ({
+    DATE: f.date,
+    "TUG REG": f.tugReg,
+    "TUG PILOT": f.tugPilot,
+    HEIGHT: f.towHeight,
+    GLIDER: f.glider,
+    P1: f.p1,
+    P2: f.p2,
+    PAYEE: f.payee,
+    "TAKE OFF": f.takeoff,
+    LANDING: f.landing,
+    "TOTAL MINUTES": Number(f.duration) || "",
+    REMARKS: f.remarks,
+    AEROS: f.aeros,
+    "OFFICE USE": f.officeUse,
+    STATUS: (f.status || "completed").toUpperCase(),
+    WARNINGS: (f.warnings || []).join("; ")
+  }));
 }
 
 async function exportCsv() {
@@ -526,56 +509,45 @@ async function exportCsv() {
     alert("NO FLIGHTS TO EXPORT");
     return;
   }
+  if (!window.XLSX) {
+    alert("THE EXCEL EXPORT LIBRARY HAS NOT LOADED. CONNECT TO THE INTERNET ONCE AND REOPEN OPERATIONSLOGS.");
+    return;
+  }
 
-  const winch = flightExportRows(flights, "winch");
-  const aerotow = flightExportRows(flights, "aerotow");
+  const workbook = XLSX.utils.book_new();
+  const winchRows = exportRows(flights, "winch");
+  const aerotowRows = exportRows(flights, "aerotow");
 
-  const workbookXml = `<?xml version="1.0"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:o="urn:schemas-microsoft-com:office:office"
- xmlns:x="urn:schemas-microsoft-com:office:excel"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:html="http://www.w3.org/TR/REC-html40">
-  <Styles>
-    <Style ss:ID="Default" ss:Name="Normal">
-      <Alignment ss:Vertical="Bottom"/>
-      <Borders/>
-      <Font ss:FontName="Calibri" x:Family="Swiss" ss:Size="11"/>
-      <Interior/>
-      <NumberFormat/>
-      <Protection/>
-    </Style>
-    <Style ss:ID="Header">
-      <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
-      <Borders>
-        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
-      </Borders>
-      <Font ss:FontName="Calibri" x:Family="Swiss" ss:Size="11" ss:Bold="1" ss:Color="#FFFFFF"/>
-      <Interior ss:Color="#124D42" ss:Pattern="Solid"/>
-    </Style>
-  </Styles>
-  ${excelWorksheetXml("Winch", winch.headers, winch.rows)}
-  ${excelWorksheetXml("Aerotow", aerotow.headers, aerotow.rows)}
-</Workbook>`;
+  const winchSheet = XLSX.utils.json_to_sheet(winchRows.length ? winchRows : [{
+    DATE: "", GLIDER: "", P1: "", P2: "", PAYEE: "", "TAKE OFF": "", LANDING: "",
+    "TOTAL MINUTES": "", REMARKS: "", AEROS: "", "OFFICE USE": "", STATUS: "", WARNINGS: ""
+  }]);
+  const aerotowSheet = XLSX.utils.json_to_sheet(aerotowRows.length ? aerotowRows : [{
+    DATE: "", "TUG REG": "", "TUG PILOT": "", HEIGHT: "", GLIDER: "", P1: "", P2: "",
+    PAYEE: "", "TAKE OFF": "", LANDING: "", "TOTAL MINUTES": "", REMARKS: "",
+    AEROS: "", "OFFICE USE": "", STATUS: "", WARNINGS: ""
+  }]);
 
-  const blob = new Blob([workbookXml], {
-    type: "application/vnd.ms-excel;charset=utf-8"
-  });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `OperationsLogs_${date}.xls`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  winchSheet["!freeze"] = { xSplit: 0, ySplit: 1 };
+  aerotowSheet["!freeze"] = { xSplit: 0, ySplit: 1 };
+  winchSheet["!cols"] = [12,12,24,24,14,11,11,14,28,10,14,12,24].map(wch => ({ wch }));
+  aerotowSheet["!cols"] = [12,12,24,10,12,24,24,14,11,11,14,28,10,14,12,24].map(wch => ({ wch }));
+
+  XLSX.utils.book_append_sheet(workbook, winchSheet, "Winch");
+  XLSX.utils.book_append_sheet(workbook, aerotowSheet, "Aerotow");
+  XLSX.writeFile(workbook, `OperationsLogs_${date}.xlsx`, { compression: true });
 }
 
 function updateConnection() {
-  const badge = $("statusBadge");
-  badge.textContent = navigator.onLine ? "ONLINE · LOCAL SAVE" : "OFFLINE READY";
-  badge.className = "status " + (navigator.onLine ? "online" : "offline");
+  if (!navigator.onLine) {
+    updatePendingCount();
+  } else if (currentDevice?.approved) {
+    processSyncQueue();
+  } else if (currentDevice) {
+    setSyncStatus("DEVICE WAITING FOR ADMIN APPROVAL", "pending");
+  } else {
+    setSyncStatus("CONNECTING…", "pending");
+  }
 }
 
 
@@ -708,9 +680,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireValidation();
   await openDb();
   await loadMasterLists();
+  await initializeCloudSync();
   setDate(todayISO());
   await loadDay();
   updateConnection();
+  if (adminAccess && adminUser) $("adminIdentity").textContent = (adminUser.email || "ADMIN").toUpperCase();
 
   $("flyingDate").addEventListener("change", () => { setDate($("flyingDate").value); loadDay(); });
   $("saveDayBtn").addEventListener("click", saveDay);
@@ -729,8 +703,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("reviewBackBtn").addEventListener("click", () => showView("homeView"));
   $("reviewBtn").addEventListener("click", reviewFlights);
   $("exportBtn").addEventListener("click", exportCsv);
-  $("adminBtn").addEventListener("click", () => openAdministration("names"));
+  $("adminBtn").addEventListener("click", requestAdminAccess);
   $("adminBackBtn").addEventListener("click", () => showView("homeView"));
+  $("adminLoginBtn").addEventListener("click", adminSignIn);
+  $("adminLoginCancelBtn").addEventListener("click", () => $("adminLoginDialog").hidden = true);
+  $("adminSignOutBtn").addEventListener("click", adminSignOut);
+  $("adminPassword").addEventListener("keydown", event => {
+    if (event.key === "Enter") adminSignIn();
+  });
+  $("adminDeviceList").addEventListener("click", async event => {
+    const button = event.target.closest("[data-device-toggle]");
+    if (!button) return;
+    await toggleDeviceApproval(button.dataset.deviceToggle, button.dataset.deviceApproved === "true");
+  });
   $("adminSearch").addEventListener("input", renderAdminList);
   $("adminAddBtn").addEventListener("click", async () => {
     const added = await addMasterValue(currentAdminList, $("adminNewValue").value);
@@ -758,6 +743,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.body.addEventListener("click", async event => {
     const button = event.target.closest("[data-add-master]");
     if (!button) return;
+    if (!adminAccess) {
+      await requestAdminAccess();
+      return;
+    }
     const added = await addMasterValue(button.dataset.addMaster, button.dataset.addValue);
     if (added) {
       button.closest(".warning-text").textContent = "";
@@ -775,7 +764,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     if (deleteButton && confirm("DELETE THIS FLIGHT FROM THIS DEVICE?")) {
       e.preventDefault();
-      await removeFlight(deleteButton.dataset.delete);
+      const id = deleteButton.dataset.delete;
+      await removeFlight(id);
+      await queueSyncRecord("flight", id, "delete");
       await reviewFlights();
       await updateDashboard();
     }
@@ -796,7 +787,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=110").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=120").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }

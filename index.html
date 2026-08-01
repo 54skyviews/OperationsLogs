@@ -12,14 +12,14 @@
   <link rel="apple-touch-icon" href="icon.svg">
   <meta name="description" content="Offline-first gliding club operations log">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=110">
+  <link rel="stylesheet" href="styles.css?v=120">
   <title>OperationsLogs</title>
 </head>
 <body>
   <header class="app-header">
     <div>
       <h1>OperationsLogs</h1>
-      <p>Offline-first gliding operations log <span id="appVersion">v1.1</span></p>
+      <p>Offline-first gliding operations log <span id="appVersion">v1.2</span></p>
     </div>
     <div id="statusBadge" class="status offline">OFFLINE READY</div>
   </header>
@@ -141,6 +141,10 @@
       <button type="button" class="back-button" id="adminBackBtn">← BACK</button>
       <div class="panel">
         <h2>Administration</h2>
+        <div class="admin-session-row">
+          <span>ADMINISTRATOR: <strong id="adminIdentity">NOT SIGNED IN</strong></span>
+          <button type="button" id="adminSignOutBtn" class="delete-btn">SIGN OUT</button>
+        </div>
         <p class="muted">Lists are stored on this device and remain after app updates.</p>
 
         <div class="admin-tabs" role="tablist">
@@ -162,8 +166,30 @@
 
         <div id="adminMessage" class="form-message"></div>
         <div id="adminList" class="admin-list"></div>
+
+        <h3 class="admin-devices-heading">Approved Devices</h3>
+        <p class="muted">Operators do not sign in. Each phone or tablet must be approved here once.</p>
+        <div id="adminDeviceList" class="admin-list"></div>
       </div>
     </section>
+
+
+  <div id="adminLoginDialog" class="dialog-overlay" hidden>
+    <div class="dialog-box" role="dialog" aria-modal="true" aria-labelledby="adminLoginTitle">
+      <h2 id="adminLoginTitle">Administrator Sign In</h2>
+      <label>Email
+        <input id="adminEmail" type="email" autocomplete="username">
+      </label>
+      <label>Password
+        <input id="adminPassword" type="password" autocomplete="current-password">
+      </label>
+      <div id="adminLoginMessage" class="form-message"></div>
+      <div class="dialog-actions">
+        <button type="button" id="adminLoginBtn" class="dialog-yes">SIGN IN</button>
+        <button type="button" id="adminLoginCancelBtn" class="dialog-no">CANCEL</button>
+      </div>
+    </div>
+  </div>
 
   <div id="yesNoDialog" class="dialog-overlay" hidden>
     <div class="dialog-box" role="dialog" aria-modal="true" aria-labelledby="yesNoDialogMessage">
@@ -175,7 +201,11 @@
     </div>
   </div>
 
-  <script src="data.js?v=110"></script>
-  <script src="app.js?v=110"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="supabase-config.js?v=120"></script>
+  <script src="sync.js?v=120"></script>
+  <script src="data.js?v=120"></script>
+  <script src="app.js?v=120"></script>
 </body>
 </html>

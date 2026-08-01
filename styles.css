@@ -341,3 +341,31 @@ button {
     flex: 1;
   }
 }
+
+
+/* Version 1.2 shared operations */
+.status.pending { background:#fff1c9; color:#754600; }
+.status.error { background:#f8dddd; color:#7e1c1c; }
+.admin-session-row {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  padding:10px;
+  margin-bottom:14px;
+  border-radius:10px;
+  background:#edf4f1;
+}
+.admin-session-row .delete-btn {
+  margin:0;
+  min-height:38px;
+}
+.admin-devices-heading {
+  margin-top:28px;
+}
+.admin-list-row small {
+  display:block;
+  margin-top:3px;
+  color:var(--muted);
+  font-weight:650;
+}

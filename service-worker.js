@@ -1,16 +1,26 @@
-const CACHE_NAME = "operationslogs-v1-1";
+const CACHE_NAME = "operationslogs-v1-2";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=110",
-  "./data.js?v=110",
-  "./app.js?v=110",
+  "./styles.css?v=120",
+  "./data.js?v=120",
+  "./app.js?v=120",
+  "./sync.js?v=120",
+  "./supabase-config.js?v=120",
   "./manifest.webmanifest",
-  "./icon.svg"
+  "./icon.svg",
+  "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2",
+  "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
 ];
 
 self.addEventListener("install", event => {
-  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)));
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(async cache => {
+      for (const asset of APP_SHELL) {
+        try { await cache.add(asset); } catch (error) { console.warn("Could not cache", asset, error); }
+      }
+    })
+  );
   self.skipWaiting();
 });
 
@@ -37,9 +47,10 @@ self.addEventListener("fetch", event => {
     );
     return;
   }
+
   event.respondWith(
     caches.match(request).then(cached => cached || fetch(request).then(response => {
-      if (response && response.status === 200 && response.type !== "opaque") {
+      if (response && response.status === 200) {
         const copy = response.clone();
         caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
       }

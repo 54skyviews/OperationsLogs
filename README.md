@@ -173,3 +173,23 @@ program updates.
 
 Important limitation: Version 1.1 does not yet synchronise list changes between devices.
 Each phone or tablet maintains its own local lists until central synchronisation is added.
+
+
+## Version 1.2 — Shared Operations
+
+Version 1.2 adds:
+
+- Shared flights and airborne list across approved devices.
+- Shared flying-day details.
+- Shared pilots, gliders, tug aircraft, tug pilots and payees.
+- Offline-first local saves with an automatic upload queue.
+- Realtime landing and list updates.
+- Device registration and administrator approval.
+- Administrator-only sign-in.
+- Operators do not sign in.
+- Administrator-only master-list changes.
+- Genuine `.xlsx` export using separate Winch and Aerotow worksheets.
+- Basic server audit trail.
+- Conflict detection that avoids silently overwriting a pending local change.
+
+Run `SUPABASE_SETUP.sql` before publishing this version.

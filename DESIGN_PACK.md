@@ -237,3 +237,20 @@ Rules:
 - Removing a list entry does not alter historical flight records.
 - Unlisted flight-entry values may be promoted into the appropriate list.
 - Version 1.1 list changes are device-local; multi-device synchronisation remains future work.
+
+
+## Version 1.2 — Authentication and synchronisation decision
+
+Operators are not asked to sign in. Each installed device receives an automatic
+anonymous Supabase Auth session and must be approved by an administrator.
+
+Administrators sign in only when opening Administration. A separate browser
+authentication storage key preserves the operator device session while the
+administrator session is active.
+
+The Supabase database is authoritative when online. IndexedDB remains the
+immediate offline working store. Flight changes are queued locally and uploaded
+when connectivity returns.
+
+Master lists are readable by approved devices but writable only by authenticated
+users present in `admin_users`.
