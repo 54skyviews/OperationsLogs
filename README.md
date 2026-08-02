@@ -247,3 +247,14 @@ Flying Day synchronisation is now field-based rather than whole-record based.
 - A pending local wind change cannot be overwritten by an incoming runway update.
 - Realtime and periodic reconciliation merge only fields that are not awaiting upload.
 - Older whole-record Flying Day queue entries are migrated automatically.
+
+
+## Version 1.2.6 correction
+
+This release prevents mobile Flying Day values from reverting while being edited.
+
+- Runway saves immediately after selection.
+- Wind direction and speed remain protected while the mobile keyboard is active.
+- Wind values save after typing pauses and again when the field loses focus.
+- Cloud reconciliation cannot overwrite a focused Flying Day field.
+- Dirty local fields are not restored from older local or cloud values until saving completes.

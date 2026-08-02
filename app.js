@@ -8,6 +8,7 @@ let editingFlightId = null;
 let currentAdminList = "names";
 let flyingDaySaveTimer = null;
 let lastLoadedRunway = "";
+const flyingDayDirtyFields = new Set();
 
 const $ = id => document.getElementById(id);
 const upper = value => (value || "").trim().replace(/\s+/g, " ").toUpperCase();
@@ -207,11 +208,19 @@ async function loadDay() {
   const day = await get("days", date);
 
   if (day) {
-    $("flyingDay").value = day.day || new Date(date + "T12:00:00").toLocaleDateString("en-GB", {weekday:"long"}).toUpperCase();
-    $("runway").value = day.runway || DATA.runways[0] || "";
-    $("windDirection").value = day.windDirection || "";
-    $("windSpeed").value = day.windSpeed || "";
-    lastLoadedRunway = day.runway || "";
+    if (!flyingDayDirtyFields.has("day")) {
+      $("flyingDay").value = day.day || new Date(date + "T12:00:00").toLocaleDateString("en-GB", {weekday:"long"}).toUpperCase();
+    }
+    if (!flyingDayDirtyFields.has("runway")) {
+      $("runway").value = day.runway || DATA.runways[0] || "";
+      lastLoadedRunway = day.runway || "";
+    }
+    if (!flyingDayDirtyFields.has("windDirection")) {
+      $("windDirection").value = day.windDirection || "";
+    }
+    if (!flyingDayDirtyFields.has("windSpeed")) {
+      $("windSpeed").value = day.windSpeed || "";
+    }
   } else {
     $("flyingDay").value = new Date(date + "T12:00:00").toLocaleDateString("en-GB", {weekday:"long"}).toUpperCase();
     $("runway").value = DATA.runways[0] || "";
@@ -255,6 +264,7 @@ async function saveDayFields(changedFields, confirmRunwayChange = true) {
     );
     if (!confirmed) {
       $("runway").value = lastLoadedRunway;
+      flyingDayDirtyFields.delete("runway");
       return false;
     }
   }
@@ -274,13 +284,15 @@ async function saveDayFields(changedFields, confirmRunwayChange = true) {
 }
 
 function scheduleFlyingDayFieldSave(fieldName, options = {}) {
+  flyingDayDirtyFields.add(fieldName);
   if (flyingDaySaveTimer) clearTimeout(flyingDaySaveTimer);
   flyingDaySaveTimer = setTimeout(async () => {
     try {
-      await saveDayFields(
+      const saved = await saveDayFields(
         [fieldName],
         options.confirmRunwayChange !== false
       );
+      if (saved) flyingDayDirtyFields.delete(fieldName);
     } catch (error) {
       console.error("Flying day auto-save failed:", error);
       setSyncStatus("SYNC PROBLEM · FLYING DAY", "error");
@@ -757,16 +769,36 @@ document.addEventListener("DOMContentLoaded", async () => {
     await loadDay();
   });
 
-  $("runway").addEventListener("change", () => {
-    scheduleFlyingDayFieldSave("runway", { confirmRunwayChange: true });
+  $("runway").addEventListener("change", async () => {
+    flyingDayDirtyFields.add("runway");
+    try {
+      const saved = await saveDayFields(["runway"], true);
+      if (saved) flyingDayDirtyFields.delete("runway");
+    } catch (error) {
+      console.error("Runway save failed:", error);
+      setSyncStatus("SYNC PROBLEM · RUNWAY", "error");
+    }
   });
   $("windDirection").addEventListener("input", () => {
+    flyingDayDirtyFields.add("windDirection");
     $("windDirection").value = $("windDirection").value.replace(/\D/g, "").slice(0, 3);
     scheduleFlyingDayFieldSave("windDirection", { confirmRunwayChange: false });
   });
+  $("windDirection").addEventListener("blur", async () => {
+    if (!flyingDayDirtyFields.has("windDirection")) return;
+    const saved = await saveDayFields(["windDirection"], false);
+    if (saved) flyingDayDirtyFields.delete("windDirection");
+  });
+
   $("windSpeed").addEventListener("input", () => {
+    flyingDayDirtyFields.add("windSpeed");
     $("windSpeed").value = $("windSpeed").value.replace(/\D/g, "").slice(0, 2);
     scheduleFlyingDayFieldSave("windSpeed", { confirmRunwayChange: false });
+  });
+  $("windSpeed").addEventListener("blur", async () => {
+    if (!flyingDayDirtyFields.has("windSpeed")) return;
+    const saved = await saveDayFields(["windSpeed"], false);
+    if (saved) flyingDayDirtyFields.delete("windSpeed");
   });
   $("winchFlightBtn").addEventListener("click", () => openEntry("winch"));
   $("aerotowFlightBtn").addEventListener("click", () => openEntry("aerotow"));
@@ -867,7 +899,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=125").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=126").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }

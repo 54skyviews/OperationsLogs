@@ -535,6 +535,11 @@ async function pullMasterLists(client = operatorSupabase) {
 async function refreshVisibleFlyingDay() {
   const dateInput = document.getElementById("flyingDate");
   if (!dateInput?.value) return;
+
+  const activeId = document.activeElement?.id || "";
+  const editingFlyingDayField = ["runway", "windDirection", "windSpeed"].includes(activeId);
+  if (editingFlyingDayField) return;
+
   await loadDay();
 }
 

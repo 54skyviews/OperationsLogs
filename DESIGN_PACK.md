@@ -284,3 +284,11 @@ Flying Day queue items contain a patch of changed fields. Supabase updates only
 those columns. Incoming records merge with local data while preserving any fields
 that still have pending local patches. This prevents stale whole-row writes from
 reverting independently edited runway or wind values.
+
+
+## Version 1.2.6 — Mobile edit protection
+
+Flying Day inputs maintain a dirty-field state. Realtime and reconciliation
+refreshes skip focused or dirty fields. Runway saves immediately, while wind
+fields use debounced saving plus a blur save. This prevents mobile browser focus
+and keyboard events from restoring stale values before the local save completes.
