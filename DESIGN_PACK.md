@@ -259,3 +259,12 @@ users present in `admin_users`.
 ## Version 1.2.2 — Realtime reconciliation
 
 Realtime is supplemented by a 30-second full reconciliation and foreground/online refreshes so missed events cannot leave a device permanently out of date.
+
+
+## Version 1.2.3 — Flying Day auto-save
+
+The Flying Day area no longer has an explicit Save button.
+
+Runway changes require confirmation because they alter the shared operational
+state for all approved devices. Wind values auto-save after a short debounce.
+All values are persisted in IndexedDB and synchronised to `flying_days`.

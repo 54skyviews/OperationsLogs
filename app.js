@@ -6,6 +6,8 @@ let db;
 let currentType = "winch";
 let editingFlightId = null;
 let currentAdminList = "names";
+let flyingDaySaveTimer = null;
+let lastLoadedRunway = "";
 
 const $ = id => document.getElementById(id);
 const upper = value => (value || "").trim().replace(/\s+/g, " ").toUpperCase();
@@ -201,27 +203,74 @@ function wireValidation() {
 }
 
 async function loadDay() {
-  const day = await get("days", $("flyingDate").value);
+  const date = $("flyingDate").value;
+  const day = await get("days", date);
+
   if (day) {
-    $("runway").value = day.runway || DATA.runways[0];
+    $("flyingDay").value = day.day || new Date(date + "T12:00:00").toLocaleDateString("en-GB", {weekday:"long"}).toUpperCase();
+    $("runway").value = day.runway || DATA.runways[0] || "";
     $("windDirection").value = day.windDirection || "";
     $("windSpeed").value = day.windSpeed || "";
+    lastLoadedRunway = day.runway || "";
+  } else {
+    $("flyingDay").value = new Date(date + "T12:00:00").toLocaleDateString("en-GB", {weekday:"long"}).toUpperCase();
+    $("runway").value = DATA.runways[0] || "";
+    $("windDirection").value = "";
+    $("windSpeed").value = "";
+    lastLoadedRunway = $("runway").value;
+    await saveDay(false);
   }
-  updateDashboard();
+
+  await updateDashboard();
 }
 
-async function saveDay() {
+async function saveDay(confirmRunwayChange = true) {
+  const date = $("flyingDate").value;
+  const newRunway = $("runway").value;
+
+  if (
+    confirmRunwayChange &&
+    lastLoadedRunway &&
+    newRunway &&
+    newRunway !== lastLoadedRunway
+  ) {
+    const confirmed = await askYesNo(
+      `CHANGE RUNWAY FROM ${lastLoadedRunway} TO ${newRunway} FOR ALL DEVICES?`
+    );
+    if (!confirmed) {
+      $("runway").value = lastLoadedRunway;
+      return false;
+    }
+  }
+
   const value = {
-    date: $("flyingDate").value,
+    date,
     day: $("flyingDay").value,
-    runway: $("runway").value,
-    windDirection: $("windDirection").value,
-    windSpeed: $("windSpeed").value,
+    runway: newRunway,
+    windDirection: $("windDirection").value.trim(),
+    windSpeed: $("windSpeed").value.trim(),
     modifiedAt: new Date().toISOString()
   };
+
   await put("days", value);
+  lastLoadedRunway = value.runway;
   await queueSyncRecord("day", value.date, "upsert");
+  return true;
 }
+
+function scheduleFlyingDaySave(options = {}) {
+  if (flyingDaySaveTimer) clearTimeout(flyingDaySaveTimer);
+  flyingDaySaveTimer = setTimeout(async () => {
+    try {
+      await saveDay(options.confirmRunwayChange !== false);
+    } catch (error) {
+      console.error("Flying day auto-save failed:", error);
+      setSyncStatus("SYNC PROBLEM · FLYING DAY", "error");
+    }
+  }, 700);
+}
+
+
 function openEntry(type) {
   editingFlightId = null;
   currentType = type;
@@ -686,8 +735,22 @@ document.addEventListener("DOMContentLoaded", async () => {
   updateConnection();
   if (adminAccess && adminUser) $("adminIdentity").textContent = (adminUser.email || "ADMIN").toUpperCase();
 
-  $("flyingDate").addEventListener("change", () => { setDate($("flyingDate").value); loadDay(); });
-  $("saveDayBtn").addEventListener("click", saveDay);
+  $("flyingDate").addEventListener("change", async () => {
+    setDate($("flyingDate").value);
+    await loadDay();
+  });
+
+  $("runway").addEventListener("change", () => {
+    scheduleFlyingDaySave({ confirmRunwayChange: true });
+  });
+  $("windDirection").addEventListener("input", () => {
+    $("windDirection").value = $("windDirection").value.replace(/\D/g, "").slice(0, 3);
+    scheduleFlyingDaySave({ confirmRunwayChange: false });
+  });
+  $("windSpeed").addEventListener("input", () => {
+    $("windSpeed").value = $("windSpeed").value.replace(/\D/g, "").slice(0, 2);
+    scheduleFlyingDaySave({ confirmRunwayChange: false });
+  });
   $("winchFlightBtn").addEventListener("click", () => openEntry("winch"));
   $("aerotowFlightBtn").addEventListener("click", () => openEntry("aerotow"));
   document.querySelectorAll("[data-time-target]").forEach(b => b.addEventListener("click", () => {
@@ -787,7 +850,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=122").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=123").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }

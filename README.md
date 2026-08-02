@@ -215,3 +215,15 @@ The 10-second approval check works even before that patch is run.
 - Pulls current cloud data when the app becomes visible or regains focus.
 - Restarts Realtime after reconnecting.
 - Repairs missed INSERT, UPDATE and DELETE events automatically.
+
+
+## Version 1.2.3 correction
+
+Version 1.2.3 changes Flying Day details to automatic saving.
+
+- Removed the Save Flying Day button.
+- Date, day, runway, wind direction and wind speed are restored when reopening a date.
+- Runway changes are confirmed before being shared with all devices.
+- Wind direction and wind speed save automatically after a short pause.
+- Flying Day changes save locally first and then synchronise through Supabase.
+- No save confirmation pop-up is displayed.
