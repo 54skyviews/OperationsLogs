@@ -254,3 +254,8 @@ when connectivity returns.
 
 Master lists are readable by approved devices but writable only by authenticated
 users present in `admin_users`.
+
+
+## Version 1.2.2 — Realtime reconciliation
+
+Realtime is supplemented by a 30-second full reconciliation and foreground/online refreshes so missed events cannot leave a device permanently out of date.

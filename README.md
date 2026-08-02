@@ -207,3 +207,11 @@ Run `SUPABASE_SETUP.sql` before publishing this version.
 
 Run `SUPABASE_1.2.1_PATCH.sql` once to add the devices table to Supabase Realtime.
 The 10-second approval check works even before that patch is run.
+
+
+## Version 1.2.2 correction
+
+- Reconciles with Supabase every 30 seconds.
+- Pulls current cloud data when the app becomes visible or regains focus.
+- Restarts Realtime after reconnecting.
+- Repairs missed INSERT, UPDATE and DELETE events automatically.

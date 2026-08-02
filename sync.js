@@ -7,6 +7,8 @@ let adminUser = null;
 let adminAccess = false;
 let realtimeChannel = null;
 let syncBusy = false;
+let reconciliationTimer = null;
+let lastCloudPullAt = 0;
 let approvalWatcher = null;
 let lastSyncError = "";
 
@@ -461,10 +463,37 @@ async function pullMasterLists(client = operatorSupabase) {
 }
 
 async function pullCloudData() {
-  if (!currentDevice?.approved) return;
+  if (!currentDevice?.approved || !navigator.onLine) return;
   await Promise.all([pullFlights(), pullFlyingDays(), pullMasterLists()]);
+  lastCloudPullAt = Date.now();
   await updateDashboard();
   if (document.getElementById("reviewView")?.classList.contains("active")) await reviewFlights();
+}
+
+async function reconcileCloudState(reason = "periodic") {
+  if (!currentDevice?.approved || !navigator.onLine || syncBusy) return;
+  try {
+    await processSyncQueue();
+    await pullCloudData();
+    setSyncStatus("ONLINE · SYNCED", "online");
+  } catch (error) {
+    console.error(`Cloud reconciliation failed (${reason}):`, error);
+    setSyncStatus("SYNC PROBLEM · RETRYING", "error");
+  }
+}
+
+function startCloudReconciliation() {
+  if (reconciliationTimer) clearInterval(reconciliationTimer);
+  reconciliationTimer = setInterval(() => reconcileCloudState("scheduled"), 30000);
+}
+
+async function restartRealtimeSubscription() {
+  if (!operatorSupabase || !currentDevice?.approved) return;
+  if (realtimeChannel) {
+    try { await operatorSupabase.removeChannel(realtimeChannel); } catch {}
+    realtimeChannel = null;
+  }
+  subscribeRealtime();
 }
 
 function subscribeRealtime() {
@@ -492,7 +521,17 @@ function subscribeRealtime() {
         await refreshCurrentDeviceStatus();
       }
     })
-    .subscribe();
+    .subscribe(status => {
+      if (status === "SUBSCRIBED") {
+        setSyncStatus("ONLINE · SYNCED", "online");
+      } else if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) {
+        setSyncStatus("REALTIME INTERRUPTED · RECONNECTING", "pending");
+        setTimeout(async () => {
+          await restartRealtimeSubscription();
+          await reconcileCloudState("realtime reconnect");
+        }, 3000);
+      }
+    });
 }
 
 async function initializeCloudSync() {
@@ -527,6 +566,7 @@ async function initializeCloudSync() {
     await pullCloudData();
     await processSyncQueue();
     subscribeRealtime();
+    startCloudReconciliation();
     setSyncStatus("ONLINE · SYNCED", "online");
   } catch (error) {
     console.error("Cloud startup failed:", error);
@@ -649,3 +689,13 @@ async function syncMasterList(key) {
   await queueSyncRecord("master", key, "replace");
   if (adminAccess && currentDevice?.approved) await processSyncQueue();
 }
+
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") reconcileCloudState("visibility");
+});
+window.addEventListener("focus", () => reconcileCloudState("focus"));
+window.addEventListener("online", async () => {
+  await restartRealtimeSubscription();
+  await reconcileCloudState("online");
+});
