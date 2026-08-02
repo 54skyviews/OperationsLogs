@@ -268,3 +268,11 @@ The Flying Day area no longer has an explicit Save button.
 Runway changes require confirmation because they alter the shared operational
 state for all approved devices. Wind values auto-save after a short debounce.
 All values are persisted in IndexedDB and synchronised to `flying_days`.
+
+
+## Version 1.2.4 — Flying Day convergence
+
+Flying Day details are refreshed after both Realtime events and periodic
+reconciliation. Realtime payloads are written directly to IndexedDB before the
+visible controls are reloaded. The subtitle no longer uses the phrase
+“Offline-first”, because connectivity is communicated solely by the status badge.

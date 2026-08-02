@@ -227,3 +227,12 @@ Version 1.2.3 changes Flying Day details to automatic saving.
 - Wind direction and wind speed save automatically after a short pause.
 - Flying Day changes save locally first and then synchronise through Supabase.
 - No save confirmation pop-up is displayed.
+
+
+## Version 1.2.4 correction
+
+- Flying Day values are refreshed after every periodic cloud reconciliation.
+- Runway and wind changes received through Realtime are applied directly to the visible controls.
+- A device now refreshes its own Flying Day values after its update reaches Supabase.
+- Missed Flying Day Realtime events are repaired by the 30-second reconciliation.
+- The subtitle now says “Gliding operations log” so it is not confused with the connection status.

@@ -218,7 +218,9 @@ async function loadDay() {
     $("windDirection").value = "";
     $("windSpeed").value = "";
     lastLoadedRunway = $("runway").value;
-    await saveDay(false);
+    if (!navigator.onLine || !currentDevice?.approved) {
+      await saveDay(false);
+    }
   }
 
   await updateDashboard();
@@ -255,6 +257,9 @@ async function saveDay(confirmRunwayChange = true) {
   await put("days", value);
   lastLoadedRunway = value.runway;
   await queueSyncRecord("day", value.date, "upsert");
+  if (navigator.onLine && currentDevice?.approved) {
+    setTimeout(() => reconcileCloudState("flying day saved"), 500);
+  }
   return true;
 }
 
@@ -850,7 +855,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=123").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=124").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }

@@ -462,10 +462,18 @@ async function pullMasterLists(client = operatorSupabase) {
   if (document.getElementById("adminView")?.classList.contains("active")) renderAdminList();
 }
 
+
+async function refreshVisibleFlyingDay() {
+  const dateInput = document.getElementById("flyingDate");
+  if (!dateInput?.value) return;
+  await loadDay();
+}
+
 async function pullCloudData() {
   if (!currentDevice?.approved || !navigator.onLine) return;
   await Promise.all([pullFlights(), pullFlyingDays(), pullMasterLists()]);
   lastCloudPullAt = Date.now();
+  await refreshVisibleFlyingDay();
   await updateDashboard();
   if (document.getElementById("reviewView")?.classList.contains("active")) await reviewFlights();
 }
@@ -512,9 +520,21 @@ function subscribeRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "master_lists" }, async () => {
       await pullMasterLists();
     })
-    .on("postgres_changes", { event: "*", schema: "public", table: "flying_days" }, async () => {
-      await pullFlyingDays();
-      await loadDay();
+    .on("postgres_changes", { event: "*", schema: "public", table: "flying_days" }, async payload => {
+      if (payload.eventType !== "DELETE" && payload.new) {
+        const row = payload.new;
+        await put("days", {
+          date: row.date,
+          day: row.day || "",
+          runway: row.runway || "",
+          windDirection: row.wind_direction || "",
+          windSpeed: row.wind_speed || "",
+          modifiedAt: row.modified_at
+        });
+      } else {
+        await pullFlyingDays();
+      }
+      await refreshVisibleFlyingDay();
     })
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "devices" }, async payload => {
       if (payload.new?.auth_user_id === operatorUser?.id) {
