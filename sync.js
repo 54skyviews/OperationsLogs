@@ -313,12 +313,17 @@ async function syncFlightQueueItem(item) {
   }
   const flight = await get("flights", item.recordId);
   if (!flight) return;
-  const { error } = await operatorSupabase
+  const { data, error } = await operatorSupabase
     .from("flights")
-    .upsert(remoteFlightFromLocal(flight), { onConflict: "id" });
+    .upsert(remoteFlightFromLocal(flight), { onConflict: "id" })
+    .select()
+    .single();
   if (error) throw error;
-  flight.syncStatus = "synced";
-  await put("flights", flight);
+
+  const synced = data ? localFlightFromRemote(data) : flight;
+  synced.syncStatus = "synced";
+  synced.pendingModifiedAt = null;
+  await put("flights", synced);
 }
 
 async function syncDayQueueItem(item) {
@@ -439,22 +444,35 @@ async function processSyncQueue() {
 }
 async function applyRemoteFlight(row) {
   const local = await get("flights", row.id);
-  if (local?.syncStatus === "pending") {
+  const pendingQueueItem = await get("syncQueue", `flight:${row.id}`);
+  const localPending = local?.syncStatus === "pending" || Boolean(pendingQueueItem);
+
+  if (localPending) {
     const remoteTime = new Date(row.modified_at || 0).getTime();
-    const localTime = new Date(local.modifiedAt || 0).getTime();
-    if (remoteTime > localTime) {
-      await put("conflicts", {
-        id: `flight:${row.id}`,
-        recordType: "flight",
-        recordId: row.id,
-        local,
-        remote: row,
-        detectedAt: new Date().toISOString()
-      });
-      setSyncStatus("SYNC PROBLEM · CONFLICT", "error");
+    const localTime = new Date(local?.pendingModifiedAt || local?.modifiedAt || 0).getTime();
+    const remoteMatchesLocal =
+      row.status === local?.status &&
+      (row.landing || "") === (local?.landing || "") &&
+      Number(row.duration || 0) === Number(local?.duration || 0);
+
+    if (remoteMatchesLocal && remoteTime >= localTime) {
+      const synced = localFlightFromRemote(row);
+      synced.syncStatus = "synced";
+      synced.pendingModifiedAt = null;
+      await put("flights", synced);
+      if (pendingQueueItem) await removeQueueItem(pendingQueueItem.id);
+      return;
+    }
+
+    if (local?.status === "completed" && row.status === "airborne") {
+      return;
+    }
+
+    if (remoteTime <= localTime || !remoteMatchesLocal) {
       return;
     }
   }
+
   await put("flights", localFlightFromRemote(row));
 }
 

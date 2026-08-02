@@ -258,3 +258,12 @@ This release prevents mobile Flying Day values from reverting while being edited
 - Wind values save after typing pauses and again when the field loses focus.
 - Cloud reconciliation cannot overwrite a focused Flying Day field.
 - Dirty local fields are not restored from older local or cloud values until saving completes.
+
+
+## Version 1.2.7 correction
+
+- Prevents phone/tablet landing updates from reverting to airborne.
+- Local landing changes remain protected while awaiting upload.
+- An older airborne record cannot replace a pending completed flight.
+- Supabase must return the matching landing status/time before pending is cleared.
+- LAND NOW and manual landing both trigger immediate reconciliation.

@@ -292,3 +292,8 @@ Flying Day inputs maintain a dirty-field state. Realtime and reconciliation
 refreshes skip focused or dirty fields. Runway saves immediately, while wind
 fields use debounced saving plus a blur save. This prevents mobile browser focus
 and keyboard events from restoring stale values before the local save completes.
+
+
+## Version 1.2.7 — Pending flight protection
+
+A flight remains pending until Supabase returns a row matching local status, landing time and duration. Incoming stale airborne rows cannot replace a pending local completed flight.

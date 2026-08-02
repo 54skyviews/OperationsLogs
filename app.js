@@ -397,6 +397,8 @@ async function saveFlight(e) {
     modifiedAt: now
   });
 
+  flight.syncStatus = "pending";
+  flight.pendingModifiedAt = flight.modifiedAt;
   await put("flights", flight);
   await queueSyncRecord("flight", flight.id, "upsert");
   editingFlightId = null;
@@ -491,9 +493,15 @@ async function landFlight(id, landingTime) {
   flight.status = "completed";
   flight.modifiedAt = new Date().toISOString();
   flight.syncStatus = "pending";
+  flight.pendingModifiedAt = flight.modifiedAt;
+  flight.syncStatus = "pending";
+  flight.pendingModifiedAt = flight.modifiedAt;
   await put("flights", flight);
   await queueSyncRecord("flight", id, "upsert");
   await updateDashboard();
+  if (navigator.onLine && currentDevice?.approved) {
+    setTimeout(() => reconcileCloudState("landing saved"), 500);
+  }
 }
 
 function reviewSortTime(flight) {
@@ -899,7 +907,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=126").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=127").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }
