@@ -82,3 +82,10 @@ the synchronisation queue when they are next edited or saved.
 
 For a controlled first rollout, export Version 1.1 records before updating and
 start Version 1.2 at the beginning of a new flying day.
+
+
+## Version 1.2.1 patch
+
+After the original Version 1.2 SQL has been run, execute `SUPABASE_1.2.1_PATCH.sql` once.
+This lets device approval changes arrive through Realtime. Version 1.2.1 also checks approval
+automatically every 10 seconds, so approval will still be detected if Realtime is delayed.

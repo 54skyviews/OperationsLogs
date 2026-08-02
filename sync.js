@@ -7,6 +7,8 @@ let adminUser = null;
 let adminAccess = false;
 let realtimeChannel = null;
 let syncBusy = false;
+let approvalWatcher = null;
+let lastSyncError = "";
 
 const CLOUD = window.OPERATIONSLOGS_SUPABASE;
 
@@ -115,6 +117,51 @@ async function ensureDeviceRegistration() {
   return currentDevice;
 }
 
+
+async function refreshCurrentDeviceStatus() {
+  if (!operatorSupabase || !operatorUser) return currentDevice;
+
+  const { data, error } = await operatorSupabase
+    .from("devices")
+    .select("*")
+    .eq("auth_user_id", operatorUser.id)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("Could not refresh device approval:", error);
+    return currentDevice;
+  }
+  if (!data) return currentDevice;
+
+  const wasApproved = Boolean(currentDevice?.approved && currentDevice?.active);
+  currentDevice = data;
+  const isApproved = Boolean(data.approved && data.active);
+
+  if (isApproved && !wasApproved) {
+    setSyncStatus("DEVICE APPROVED · STARTING SYNC", "online");
+    await pullCloudData();
+    subscribeRealtime();
+    await processSyncQueue();
+  } else if (!isApproved) {
+    setSyncStatus("DEVICE WAITING FOR ADMIN APPROVAL", "pending");
+  }
+
+  return currentDevice;
+}
+
+function startApprovalWatcher() {
+  if (approvalWatcher) clearInterval(approvalWatcher);
+  approvalWatcher = setInterval(async () => {
+    if (!navigator.onLine || !operatorSupabase || !operatorUser) return;
+    await refreshCurrentDeviceStatus();
+  }, 10000);
+
+  window.addEventListener("focus", refreshCurrentDeviceStatus);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshCurrentDeviceStatus();
+  });
+}
+
 function remoteFlightFromLocal(flight) {
   return {
     id: flight.id,
@@ -203,11 +250,34 @@ async function queueSyncRecord(recordType, recordId, action = "upsert") {
 async function updatePendingCount() {
   if (!db) return;
   const pending = await allFromStore("syncQueue");
+  const masterWaiting = pending.filter(item => item.recordType === "master").length;
+  const operationalWaiting = pending.length - masterWaiting;
+
   if (!navigator.onLine) {
     setSyncStatus(`OFFLINE · ${pending.length} WAITING`, "offline");
-  } else if (pending.length && currentDevice?.approved) {
-    setSyncStatus(`ONLINE · ${pending.length} WAITING`, "pending");
+    return;
   }
+  if (!currentDevice?.approved || !currentDevice?.active) {
+    setSyncStatus("DEVICE WAITING FOR ADMIN APPROVAL", "pending");
+    return;
+  }
+  if (lastSyncError) {
+    setSyncStatus(`SYNC PROBLEM · ${lastSyncError}`, "error");
+    return;
+  }
+  if (operationalWaiting > 0) {
+    setSyncStatus(`ONLINE · ${operationalWaiting} FLIGHT CHANGES WAITING`, "pending");
+    return;
+  }
+  if (masterWaiting > 0 && !adminAccess) {
+    setSyncStatus(`ONLINE · ${masterWaiting} ADMIN CHANGE WAITING`, "pending");
+    return;
+  }
+  if (pending.length > 0) {
+    setSyncStatus(`ONLINE · ${pending.length} WAITING`, "pending");
+    return;
+  }
+  setSyncStatus("ONLINE · SYNCED", "online");
 }
 
 async function syncFlightQueueItem(item) {
@@ -260,39 +330,53 @@ async function syncMasterQueueItem(item) {
 }
 
 async function processSyncQueue() {
-  if (syncBusy || !navigator.onLine || !operatorSupabase || !currentDevice?.approved) {
+  if (syncBusy || !navigator.onLine || !operatorSupabase) {
     await updatePendingCount();
     return;
   }
+
+  if (!currentDevice?.approved || !currentDevice?.active) {
+    await refreshCurrentDeviceStatus();
+  }
+  if (!currentDevice?.approved || !currentDevice?.active) {
+    await updatePendingCount();
+    return;
+  }
+
   syncBusy = true;
+  lastSyncError = "";
   try {
     const items = (await allFromStore("syncQueue"))
       .sort((a, b) => String(a.queuedAt).localeCompare(String(b.queuedAt)));
 
     for (const item of items) {
+      // Administrator list changes must not prevent flights or flying-day records syncing.
+      if (item.recordType === "master" && !adminAccess) continue;
+
       try {
         if (item.recordType === "flight") await syncFlightQueueItem(item);
-        if (item.recordType === "day") await syncDayQueueItem(item);
-        if (item.recordType === "master") await syncMasterQueueItem(item);
+        else if (item.recordType === "day") await syncDayQueueItem(item);
+        else if (item.recordType === "master") await syncMasterQueueItem(item);
+        else {
+          // Remove obsolete queue entries created by pre-1.2 versions.
+          await removeQueueItem(item.id);
+          continue;
+        }
         await removeQueueItem(item.id);
       } catch (error) {
         item.attempts = (item.attempts || 0) + 1;
         item.lastError = error.message;
         await put("syncQueue", item);
-        throw error;
+        lastSyncError = String(error.message || "UNKNOWN ERROR").toUpperCase().slice(0, 45);
+        console.error("Sync item failed:", item, error);
+        // Continue with other records so one bad item cannot block all flights.
       }
     }
-
-    setSyncStatus("ONLINE · SYNCED", "online");
-  } catch (error) {
-    console.error("Sync failed:", error);
-    setSyncStatus("SYNC PROBLEM · REVIEW REQUIRED", "error");
   } finally {
     syncBusy = false;
     await updatePendingCount();
   }
 }
-
 async function applyRemoteFlight(row) {
   const local = await get("flights", row.id);
   if (local?.syncStatus === "pending") {
@@ -403,6 +487,11 @@ function subscribeRealtime() {
       await pullFlyingDays();
       await loadDay();
     })
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "devices" }, async payload => {
+      if (payload.new?.auth_user_id === operatorUser?.id) {
+        await refreshCurrentDeviceStatus();
+      }
+    })
     .subscribe();
 }
 
@@ -416,6 +505,8 @@ async function initializeCloudSync() {
     setSyncStatus("CONNECTING…", "pending");
     await ensureOperatorSession();
     await ensureDeviceRegistration();
+    startApprovalWatcher();
+    await refreshCurrentDeviceStatus();
 
     const { data: adminSession } = await adminSupabase.auth.getSession();
     if (adminSession.session?.user) {
@@ -542,6 +633,7 @@ async function toggleDeviceApproval(id, currentlyApproved) {
     return;
   }
   await loadAdminDevices();
+  await refreshCurrentDeviceStatus();
 
   if (currentDevice?.id === id) {
     currentDevice.approved = !currentlyApproved;

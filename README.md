@@ -193,3 +193,17 @@ Version 1.2 adds:
 - Conflict detection that avoids silently overwriting a pending local change.
 
 Run `SUPABASE_SETUP.sql` before publishing this version.
+
+
+## Version 1.2.1 synchronisation correction
+
+- Approved devices now refresh their own approval state automatically every 10 seconds.
+- Approval is also refreshed when the app returns to the foreground or the browser regains focus.
+- A device starts pulling and uploading records as soon as approval is detected.
+- Administrator-only master-list queue entries no longer block flight or flying-day synchronisation.
+- One failed queue item no longer prevents later flight records from being processed.
+- Sync status now distinguishes flight changes from administrator changes waiting.
+- Obsolete queue entries from older releases are removed safely.
+
+Run `SUPABASE_1.2.1_PATCH.sql` once to add the devices table to Supabase Realtime.
+The 10-second approval check works even before that patch is run.

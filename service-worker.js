@@ -1,12 +1,12 @@
-const CACHE_NAME = "operationslogs-v1-2";
+const CACHE_NAME = "operationslogs-v1-2-1";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=120",
-  "./data.js?v=120",
-  "./app.js?v=120",
-  "./sync.js?v=120",
-  "./supabase-config.js?v=120",
+  "./styles.css?v=121",
+  "./data.js?v=121",
+  "./app.js?v=121",
+  "./sync.js?v=121",
+  "./supabase-config.js?v=121",
   "./manifest.webmanifest",
   "./icon.svg",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2",
