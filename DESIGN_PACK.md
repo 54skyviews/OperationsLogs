@@ -276,3 +276,11 @@ Flying Day details are refreshed after both Realtime events and periodic
 reconciliation. Realtime payloads are written directly to IndexedDB before the
 visible controls are reloaded. The subtitle no longer uses the phrase
 “Offline-first”, because connectivity is communicated solely by the status badge.
+
+
+## Version 1.2.5 — Field-level Flying Day synchronisation
+
+Flying Day queue items contain a patch of changed fields. Supabase updates only
+those columns. Incoming records merge with local data while preserving any fields
+that still have pending local patches. This prevents stale whole-row writes from
+reverting independently edited runway or wind values.

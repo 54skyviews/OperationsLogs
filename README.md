@@ -236,3 +236,14 @@ Version 1.2.3 changes Flying Day details to automatic saving.
 - A device now refreshes its own Flying Day values after its update reaches Supabase.
 - Missed Flying Day Realtime events are repaired by the 30-second reconciliation.
 - The subtitle now says “Gliding operations log” so it is not confused with the connection status.
+
+
+## Version 1.2.5 correction
+
+Flying Day synchronisation is now field-based rather than whole-record based.
+
+- Runway, wind direction and wind speed each queue and synchronise independently.
+- A pending local runway change cannot be overwritten by an incoming wind update.
+- A pending local wind change cannot be overwritten by an incoming runway update.
+- Realtime and periodic reconciliation merge only fields that are not awaiting upload.
+- Older whole-record Flying Day queue entries are migrated automatically.

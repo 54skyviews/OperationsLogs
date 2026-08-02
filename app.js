@@ -219,25 +219,39 @@ async function loadDay() {
     $("windSpeed").value = "";
     lastLoadedRunway = $("runway").value;
     if (!navigator.onLine || !currentDevice?.approved) {
-      await saveDay(false);
+      await saveDayFields(["day", "runway", "windDirection", "windSpeed"], false);
     }
   }
 
   await updateDashboard();
 }
 
-async function saveDay(confirmRunwayChange = true) {
+async function saveDayFields(changedFields, confirmRunwayChange = true) {
   const date = $("flyingDate").value;
-  const newRunway = $("runway").value;
+  const existing = (await get("days", date)) || {
+    date,
+    day: $("flyingDay").value,
+    runway: "",
+    windDirection: "",
+    windSpeed: "",
+    modifiedAt: new Date().toISOString()
+  };
+
+  const patch = {};
+  if (changedFields.includes("day")) patch.day = $("flyingDay").value;
+  if (changedFields.includes("runway")) patch.runway = $("runway").value;
+  if (changedFields.includes("windDirection")) patch.windDirection = $("windDirection").value.trim();
+  if (changedFields.includes("windSpeed")) patch.windSpeed = $("windSpeed").value.trim();
 
   if (
+    changedFields.includes("runway") &&
     confirmRunwayChange &&
     lastLoadedRunway &&
-    newRunway &&
-    newRunway !== lastLoadedRunway
+    patch.runway &&
+    patch.runway !== lastLoadedRunway
   ) {
     const confirmed = await askYesNo(
-      `CHANGE RUNWAY FROM ${lastLoadedRunway} TO ${newRunway} FOR ALL DEVICES?`
+      `CHANGE RUNWAY FROM ${lastLoadedRunway} TO ${patch.runway} FOR ALL DEVICES?`
     );
     if (!confirmed) {
       $("runway").value = lastLoadedRunway;
@@ -245,36 +259,34 @@ async function saveDay(confirmRunwayChange = true) {
     }
   }
 
-  const value = {
-    date,
-    day: $("flyingDay").value,
-    runway: newRunway,
-    windDirection: $("windDirection").value.trim(),
-    windSpeed: $("windSpeed").value.trim(),
-    modifiedAt: new Date().toISOString()
-  };
-
+  const modifiedAt = new Date().toISOString();
+  const value = { ...existing, ...patch, date, modifiedAt };
   await put("days", value);
-  lastLoadedRunway = value.runway;
-  await queueSyncRecord("day", value.date, "upsert");
+
+  if (changedFields.includes("runway")) lastLoadedRunway = value.runway;
+
+  await queueFlyingDayPatch(date, patch, modifiedAt);
+
   if (navigator.onLine && currentDevice?.approved) {
-    setTimeout(() => reconcileCloudState("flying day saved"), 500);
+    setTimeout(() => reconcileCloudState("flying day field saved"), 500);
   }
   return true;
 }
 
-function scheduleFlyingDaySave(options = {}) {
+function scheduleFlyingDayFieldSave(fieldName, options = {}) {
   if (flyingDaySaveTimer) clearTimeout(flyingDaySaveTimer);
   flyingDaySaveTimer = setTimeout(async () => {
     try {
-      await saveDay(options.confirmRunwayChange !== false);
+      await saveDayFields(
+        [fieldName],
+        options.confirmRunwayChange !== false
+      );
     } catch (error) {
       console.error("Flying day auto-save failed:", error);
       setSyncStatus("SYNC PROBLEM · FLYING DAY", "error");
     }
   }, 700);
 }
-
 
 function openEntry(type) {
   editingFlightId = null;
@@ -746,15 +758,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   $("runway").addEventListener("change", () => {
-    scheduleFlyingDaySave({ confirmRunwayChange: true });
+    scheduleFlyingDayFieldSave("runway", { confirmRunwayChange: true });
   });
   $("windDirection").addEventListener("input", () => {
     $("windDirection").value = $("windDirection").value.replace(/\D/g, "").slice(0, 3);
-    scheduleFlyingDaySave({ confirmRunwayChange: false });
+    scheduleFlyingDayFieldSave("windDirection", { confirmRunwayChange: false });
   });
   $("windSpeed").addEventListener("input", () => {
     $("windSpeed").value = $("windSpeed").value.replace(/\D/g, "").slice(0, 2);
-    scheduleFlyingDaySave({ confirmRunwayChange: false });
+    scheduleFlyingDayFieldSave("windSpeed", { confirmRunwayChange: false });
   });
   $("winchFlightBtn").addEventListener("click", () => openEntry("winch"));
   $("aerotowFlightBtn").addEventListener("click", () => openEntry("aerotow"));
@@ -855,7 +867,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=124").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=125").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }

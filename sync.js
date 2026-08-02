@@ -235,6 +235,29 @@ async function removeQueueItem(id) {
   await remove("syncQueue", id);
 }
 
+
+async function queueFlyingDayPatch(date, patch, modifiedAt) {
+  const queueId = `day:${date}`;
+  const existing = await get("syncQueue", queueId);
+  await put("syncQueue", {
+    id: queueId,
+    recordType: "day",
+    recordId: date,
+    action: "patch",
+    patch: { ...(existing?.patch || {}), ...patch },
+    modifiedAt: modifiedAt || new Date().toISOString(),
+    queuedAt: existing?.queuedAt || new Date().toISOString(),
+    attempts: existing?.attempts || 0
+  });
+  updatePendingCount();
+  if (navigator.onLine) setTimeout(processSyncQueue, 0);
+}
+
+async function pendingDayPatch(date) {
+  const item = await get("syncQueue", `day:${date}`);
+  return item?.recordType === "day" ? (item.patch || {}) : {};
+}
+
 async function queueSyncRecord(recordType, recordId, action = "upsert") {
   const queueId = `${recordType}:${recordId}`;
   await put("syncQueue", {
@@ -301,15 +324,50 @@ async function syncFlightQueueItem(item) {
 async function syncDayQueueItem(item) {
   const day = await get("days", item.recordId);
   if (!day) return;
-  const { error } = await operatorSupabase.from("flying_days").upsert({
-    date: day.date,
-    day: day.day || "",
-    runway: day.runway || "",
-    wind_direction: day.windDirection || "",
-    wind_speed: day.windSpeed || "",
+
+  const patch = item.patch && Object.keys(item.patch).length
+    ? item.patch
+    : {
+        day: day.day || "",
+        runway: day.runway || "",
+        windDirection: day.windDirection || "",
+        windSpeed: day.windSpeed || ""
+      };
+  const remotePatch = {
     modified_by_device: currentDevice?.id || null,
-    modified_at: day.modifiedAt || new Date().toISOString()
-  }, { onConflict: "date" });
+    modified_at: item.modifiedAt || day.modifiedAt || new Date().toISOString()
+  };
+
+  if (Object.prototype.hasOwnProperty.call(patch, "day")) remotePatch.day = patch.day || "";
+  if (Object.prototype.hasOwnProperty.call(patch, "runway")) remotePatch.runway = patch.runway || "";
+  if (Object.prototype.hasOwnProperty.call(patch, "windDirection")) remotePatch.wind_direction = patch.windDirection || "";
+  if (Object.prototype.hasOwnProperty.call(patch, "windSpeed")) remotePatch.wind_speed = patch.windSpeed || "";
+
+  const { data: existing, error: selectError } = await operatorSupabase
+    .from("flying_days")
+    .select("date")
+    .eq("date", item.recordId)
+    .maybeSingle();
+  if (selectError) throw selectError;
+
+  let error;
+  if (existing) {
+    ({ error } = await operatorSupabase
+      .from("flying_days")
+      .update(remotePatch)
+      .eq("date", item.recordId));
+  } else {
+    ({ error } = await operatorSupabase
+      .from("flying_days")
+      .insert({
+        date: item.recordId,
+        day: day.day || "",
+        runway: day.runway || "",
+        wind_direction: day.windDirection || "",
+        wind_speed: day.windSpeed || "",
+        ...remotePatch
+      }));
+  }
   if (error) throw error;
 }
 
@@ -424,12 +482,23 @@ async function pullFlyingDays() {
   if (error) throw error;
 
   for (const row of data || []) {
+    const local = await get("days", row.date);
+    const pending = await pendingDayPatch(row.date);
+
     await put("days", {
       date: row.date,
-      day: row.day || "",
-      runway: row.runway || "",
-      windDirection: row.wind_direction || "",
-      windSpeed: row.wind_speed || "",
+      day: Object.prototype.hasOwnProperty.call(pending, "day")
+        ? (local?.day || "")
+        : (row.day || ""),
+      runway: Object.prototype.hasOwnProperty.call(pending, "runway")
+        ? (local?.runway || "")
+        : (row.runway || ""),
+      windDirection: Object.prototype.hasOwnProperty.call(pending, "windDirection")
+        ? (local?.windDirection || "")
+        : (row.wind_direction || ""),
+      windSpeed: Object.prototype.hasOwnProperty.call(pending, "windSpeed")
+        ? (local?.windSpeed || "")
+        : (row.wind_speed || ""),
       modifiedAt: row.modified_at
     });
   }
@@ -523,12 +592,23 @@ function subscribeRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "flying_days" }, async payload => {
       if (payload.eventType !== "DELETE" && payload.new) {
         const row = payload.new;
+        const local = await get("days", row.date);
+        const pending = await pendingDayPatch(row.date);
+
         await put("days", {
           date: row.date,
-          day: row.day || "",
-          runway: row.runway || "",
-          windDirection: row.wind_direction || "",
-          windSpeed: row.wind_speed || "",
+          day: Object.prototype.hasOwnProperty.call(pending, "day")
+            ? (local?.day || "")
+            : (row.day || ""),
+          runway: Object.prototype.hasOwnProperty.call(pending, "runway")
+            ? (local?.runway || "")
+            : (row.runway || ""),
+          windDirection: Object.prototype.hasOwnProperty.call(pending, "windDirection")
+            ? (local?.windDirection || "")
+            : (row.wind_direction || ""),
+          windSpeed: Object.prototype.hasOwnProperty.call(pending, "windSpeed")
+            ? (local?.windSpeed || "")
+            : (row.wind_speed || ""),
           modifiedAt: row.modified_at
         });
       } else {
