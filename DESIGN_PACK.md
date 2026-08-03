@@ -325,3 +325,8 @@ The previous `flying_days` table represented all Flying Day values in one row.
 Version 1.2.11 uses `flying_day_values`, keyed by `(date, field_name)`. Each
 Realtime event, queue item, database update and acknowledgement therefore
 contains exactly one field and cannot carry stale values for another field.
+
+## Version 1.3.0 — Cloud-authoritative Flying Day module
+
+User input and programmatic updates are explicitly separated. Realtime events
+write the exact field directly to IndexedDB and the visible control.

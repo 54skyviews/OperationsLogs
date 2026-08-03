@@ -313,3 +313,12 @@ A device changing a wind value can no longer alter the runway or the other wind
 value.
 
 Run `SUPABASE_1.2.11_PATCH.sql` once before uploading this release.
+
+## Version 1.3.0 — Flying Day rewrite
+
+Cloud data is authoritative while online. Programmatic control updates cannot
+trigger saves. Realtime updates affect only the changed field. IndexedDB is
+fallback-only except for a pending local edit. Existing flight, landing,
+administration and export functions are unchanged.
+
+Run `SUPABASE_1.3.0_PATCH.sql` once before publishing.

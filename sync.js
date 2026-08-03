@@ -272,6 +272,23 @@ async function pendingDayFields(date) {
   return pending;
 }
 
+async function fetchCloudFlyingDayValues(date) {
+  const { data, error } = await operatorSupabase
+    .from("flying_day_values")
+    .select("field_name,value")
+    .eq("date", date);
+  if (error) throw error;
+  if (!data?.length) return null;
+
+  const values = { date, day:"", runway:"", windDirection:"", windSpeed:"" };
+  for (const row of data) {
+    if (Object.prototype.hasOwnProperty.call(values, row.field_name)) {
+      values[row.field_name] = row.value ?? "";
+    }
+  }
+  return values;
+}
+
 async function queueSyncRecord(recordType, recordId, action = "upsert") {
   const queueId = `${recordType}:${recordId}`;
   await put("syncQueue", {
@@ -288,7 +305,7 @@ async function queueSyncRecord(recordType, recordId, action = "upsert") {
 
 
 async function cleanupLegacyFlyingDayQueue() {
-  const cleanupKey = "operationslogs-flying-day-queue-cleanup-v1211";
+  const cleanupKey = "operationslogs-flying-day-queue-cleanup-v130";
   if (localStorage.getItem(cleanupKey) === "done") return false;
 
   const items = await allFromStore("syncQueue");
@@ -360,23 +377,28 @@ async function syncDayFieldQueueItem(item) {
   const { data, error } = await operatorSupabase
     .from("flying_day_values")
     .upsert({
-      date: item.recordId,
-      field_name: item.fieldName,
-      value: item.value ?? "",
-      modified_by_device: currentDevice?.id || null,
-      modified_at: item.modifiedAt || new Date().toISOString()
-    }, { onConflict: "date,field_name" })
+      date:item.recordId,
+      field_name:item.fieldName,
+      value:item.value ?? "",
+      modified_by_device:currentDevice?.id || null,
+      modified_at:item.modifiedAt || new Date().toISOString()
+    }, { onConflict:"date,field_name" })
     .select()
     .single();
 
   if (error) throw error;
 
-  // Acknowledge only this exact field. Never write any other Flying Day value.
-  const local = (await get("days", item.recordId)) || { date: item.recordId };
-  local[item.fieldName] = data.value ?? "";
-  local.modifiedAt = data.modified_at;
-  await put("days", local);
-
+  const latest = await get("syncQueue", item.id);
+  if (!latest || latest.version === item.version) {
+    if (typeof flyingDayState !== "undefined") {
+      flyingDayState.pending.delete(item.fieldName);
+      flyingDayState.displayed[item.fieldName] = data.value ?? "";
+    }
+    const local = (await get("days", item.recordId)) || { date:item.recordId };
+    local[item.fieldName] = data.value ?? "";
+    local.modifiedAt = data.modified_at;
+    await put("days", local);
+  }
   return data;
 }
 
@@ -611,22 +633,11 @@ async function pullMasterLists(client = operatorSupabase) {
 }
 
 
-async function refreshVisibleFlyingDay() {
-  const dateInput = document.getElementById("flyingDate");
-  if (!dateInput?.value) return;
-
-  const activeId = document.activeElement?.id || "";
-  const editingFlyingDayField = ["runway", "windDirection", "windSpeed"].includes(activeId);
-  if (editingFlyingDayField) return;
-
-  await loadDay();
-}
-
 async function pullCloudData() {
   if (!currentDevice?.approved || !navigator.onLine) return;
   await Promise.all([pullFlights(), pullFlyingDays(), pullMasterLists()]);
   lastCloudPullAt = Date.now();
-  await refreshVisibleFlyingDay();
+  
   await updateDashboard();
   if (document.getElementById("reviewView")?.classList.contains("active")) await reviewFlights();
 }
@@ -692,12 +703,17 @@ function subscribeRealtime() {
           local[row.field_name] = row.value ?? "";
           local.modifiedAt = row.modified_at;
           await put("days", local);
+
+          if (
+            document.getElementById("flyingDate")?.value === row.date &&
+            typeof setFlyingDayControl === "function"
+          ) {
+            setFlyingDayControl(row.field_name, row.value ?? "");
+          }
         }
       } else {
         await pullFlyingDays();
       }
-
-      await refreshVisibleFlyingDay();
     })
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "devices" }, async payload => {
       if (payload.new?.auth_user_id === operatorUser?.id) {
@@ -749,7 +765,7 @@ async function initializeCloudSync() {
 
     if (flyingDayQueueWasCleaned) {
       await forcePullFlyingDays();
-      await refreshVisibleFlyingDay();
+      
     }
     await pullCloudData();
     await processSyncQueue();

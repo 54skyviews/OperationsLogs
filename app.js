@@ -6,9 +6,13 @@ let db;
 let currentType = "winch";
 let editingFlightId = null;
 let currentAdminList = "names";
-const flyingDaySaveTimers = new Map();
 let lastLoadedRunway = "";
-const flyingDayDirtyFields = new Set();
+const flyingDayState = {
+  suppressEvents: false,
+  pending: new Map(),
+  timers: new Map(),
+  displayed: { day: "", runway: "", windDirection: "", windSpeed: "" }
+};
 
 const $ = id => document.getElementById(id);
 const upper = value => (value || "").trim().replace(/\s+/g, " ").toUpperCase();
@@ -203,112 +207,93 @@ function wireValidation() {
   }));
 }
 
+function setFlyingDayControl(fieldName, value) {
+  const ids = { day:"flyingDay", runway:"runway", windDirection:"windDirection", windSpeed:"windSpeed" };
+  const control = $(ids[fieldName]);
+  if (!control) return;
+  flyingDayState.suppressEvents = true;
+  control.value = value ?? "";
+  flyingDayState.displayed[fieldName] = control.value;
+  if (fieldName === "runway") lastLoadedRunway = control.value;
+  setTimeout(() => { flyingDayState.suppressEvents = false; }, 0);
+}
+
+function readFlyingDayControl(fieldName) {
+  const ids = { day:"flyingDay", runway:"runway", windDirection:"windDirection", windSpeed:"windSpeed" };
+  return ($(ids[fieldName])?.value || "").trim();
+}
+
 async function loadDay() {
   const date = $("flyingDate").value;
-  const day = await get("days", date);
-  const pendingPatch = typeof pendingDayFields === "function"
-    ? await pendingDayFields(date)
-    : {};
+  const defaultDay = new Date(date + "T12:00:00")
+    .toLocaleDateString("en-GB", { weekday:"long" }).toUpperCase();
 
-  if (day) {
-    if (!flyingDayDirtyFields.has("day") && !Object.prototype.hasOwnProperty.call(pendingPatch, "day")) {
-      $("flyingDay").value = day.day || new Date(date + "T12:00:00").toLocaleDateString("en-GB", {weekday:"long"}).toUpperCase();
-    }
-    if (!flyingDayDirtyFields.has("runway") && !Object.prototype.hasOwnProperty.call(pendingPatch, "runway")) {
-      $("runway").value = day.runway || DATA.runways[0] || "";
-      lastLoadedRunway = day.runway || "";
-    }
-    if (!flyingDayDirtyFields.has("windDirection") && !Object.prototype.hasOwnProperty.call(pendingPatch, "windDirection")) {
-      $("windDirection").value = day.windDirection || "";
-    }
-    if (!flyingDayDirtyFields.has("windSpeed") && !Object.prototype.hasOwnProperty.call(pendingPatch, "windSpeed")) {
-      $("windSpeed").value = day.windSpeed || "";
-    }
-  } else {
-    $("flyingDay").value = new Date(date + "T12:00:00").toLocaleDateString("en-GB", {weekday:"long"}).toUpperCase();
-    $("runway").value = DATA.runways[0] || "";
-    $("windDirection").value = "";
-    $("windSpeed").value = "";
-    lastLoadedRunway = $("runway").value;
-    if (!navigator.onLine || !currentDevice?.approved) {
-      await saveDayFields(["day", "runway", "windDirection", "windSpeed"], false);
-    }
+  let values = null;
+  if (navigator.onLine && currentDevice?.approved) {
+    try { values = await fetchCloudFlyingDayValues(date); }
+    catch (error) { console.warn("Cloud Flying Day read failed:", error); }
+  }
+  if (!values) values = await get("days", date);
+
+  values = {
+    date,
+    day: values?.day || defaultDay,
+    runway: values?.runway || DATA.runways[0] || "",
+    windDirection: values?.windDirection || "",
+    windSpeed: values?.windSpeed || ""
+  };
+
+  const pending = await pendingDayFields(date);
+  for (const [fieldName, value] of Object.entries(pending)) {
+    values[fieldName] = value ?? "";
   }
 
+  for (const fieldName of ["day","runway","windDirection","windSpeed"]) {
+    setFlyingDayControl(fieldName, values[fieldName]);
+  }
+
+  await put("days", { ...values, modifiedAt:new Date().toISOString() });
   await updateDashboard();
 }
 
-async function saveDayFields(changedFields, confirmRunwayChange = true) {
+async function saveFlyingDayField(fieldName, confirmRunwayChange = false) {
+  if (flyingDayState.suppressEvents) return false;
+
   const date = $("flyingDate").value;
-  const existing = (await get("days", date)) || {
-    date,
-    day: $("flyingDay").value,
-    runway: "",
-    windDirection: "",
-    windSpeed: "",
-    modifiedAt: new Date().toISOString()
-  };
+  const value = readFlyingDayControl(fieldName);
+  const previous = flyingDayState.displayed[fieldName] ?? "";
 
-  const patch = {};
-  if (changedFields.includes("day")) patch.day = $("flyingDay").value;
-  if (changedFields.includes("runway")) patch.runway = $("runway").value;
-  if (changedFields.includes("windDirection")) patch.windDirection = $("windDirection").value.trim();
-  if (changedFields.includes("windSpeed")) patch.windSpeed = $("windSpeed").value.trim();
-
-  if (
-    changedFields.includes("runway") &&
-    confirmRunwayChange &&
-    lastLoadedRunway &&
-    patch.runway &&
-    patch.runway !== lastLoadedRunway
-  ) {
-    const confirmed = await askYesNo(
-      `CHANGE RUNWAY FROM ${lastLoadedRunway} TO ${patch.runway} FOR ALL DEVICES?`
-    );
+  if (fieldName === "runway" && confirmRunwayChange && previous && value !== previous) {
+    const confirmed = await askYesNo(`CHANGE RUNWAY FROM ${previous} TO ${value} FOR ALL DEVICES?`);
     if (!confirmed) {
-      $("runway").value = lastLoadedRunway;
-      flyingDayDirtyFields.delete("runway");
+      setFlyingDayControl("runway", previous);
       return false;
     }
   }
 
-  const modifiedAt = new Date().toISOString();
-  const value = { ...existing, ...patch, date, modifiedAt };
-  await put("days", value);
+  if (value === previous && !flyingDayState.pending.has(fieldName)) return true;
 
-  if (changedFields.includes("runway")) lastLoadedRunway = value.runway;
+  flyingDayState.pending.set(fieldName, value);
+  flyingDayState.displayed[fieldName] = value;
 
-  for (const [fieldName, fieldValue] of Object.entries(patch)) {
-    await queueFlyingDayField(date, fieldName, fieldValue, modifiedAt);
-  }
+  const local = (await get("days", date)) || { date };
+  local[fieldName] = value;
+  local.modifiedAt = new Date().toISOString();
+  await put("days", local);
+  await queueFlyingDayField(date, fieldName, value, local.modifiedAt);
 
-  if (navigator.onLine && currentDevice?.approved) {
-    setTimeout(() => reconcileCloudState("flying day field saved"), 500);
-  }
+  if (navigator.onLine && currentDevice?.approved) setTimeout(processSyncQueue, 0);
   return true;
 }
 
-function scheduleFlyingDayFieldSave(fieldName, options = {}) {
-  flyingDayDirtyFields.add(fieldName);
-  const existingTimer = flyingDaySaveTimers.get(fieldName);
-  if (existingTimer) clearTimeout(existingTimer);
-
-  const timer = setTimeout(async () => {
-    try {
-      const saved = await saveDayFields(
-        [fieldName],
-        options.confirmRunwayChange !== false
-      );
-      if (saved) flyingDayDirtyFields.delete(fieldName);
-    } catch (error) {
-      console.error(`Flying day ${fieldName} auto-save failed:`, error);
-      setSyncStatus("SYNC PROBLEM · FLYING DAY", "error");
-    } finally {
-      flyingDaySaveTimers.delete(fieldName);
-    }
-  }, 700);
-
-  flyingDaySaveTimers.set(fieldName, timer);
+function scheduleFlyingDayFieldSave(fieldName) {
+  if (flyingDayState.suppressEvents) return;
+  const prior = flyingDayState.timers.get(fieldName);
+  if (prior) clearTimeout(prior);
+  flyingDayState.timers.set(fieldName, setTimeout(async () => {
+    try { await saveFlyingDayField(fieldName, false); }
+    finally { flyingDayState.timers.delete(fieldName); }
+  }, 500));
 }
 
 function openEntry(type) {
@@ -783,59 +768,43 @@ document.addEventListener("DOMContentLoaded", async () => {
   updateConnection();
   if (adminAccess && adminUser) $("adminIdentity").textContent = (adminUser.email || "ADMIN").toUpperCase();
 
-  $("flyingDate").addEventListener("change", async () => {
+  $("flyingDate").addEventListener("change", async event => {
+    if (!event.isTrusted || flyingDayState.suppressEvents) return;
     setDate($("flyingDate").value);
     await loadDay();
   });
 
-  $("runway").addEventListener("change", async () => {
-    flyingDayDirtyFields.add("runway");
-    try {
-      const saved = await saveDayFields(["runway"], true);
-      if (saved) flyingDayDirtyFields.delete("runway");
-    } catch (error) {
-      console.error("Runway save failed:", error);
-      setSyncStatus("SYNC PROBLEM · RUNWAY", "error");
-    }
-  });
-  $("windDirection").addEventListener("input", () => {
-    flyingDayDirtyFields.add("windDirection");
-    $("windDirection").value = $("windDirection").value.replace(/\D/g, "").slice(0, 3);
-    scheduleFlyingDayFieldSave("windDirection", { confirmRunwayChange: false });
-  });
-  $("windDirection").addEventListener("blur", async () => {
-    if (!flyingDayDirtyFields.has("windDirection")) return;
-    const saved = await saveDayFields(["windDirection"], false);
-    if (saved) flyingDayDirtyFields.delete("windDirection");
-  });
-  $("windDirection").addEventListener("change", async () => {
-    flyingDayDirtyFields.add("windDirection");
-    const saved = await saveDayFields(["windDirection"], false);
-    if (saved) flyingDayDirtyFields.delete("windDirection");
+  $("runway").addEventListener("change", async event => {
+    if (!event.isTrusted || flyingDayState.suppressEvents) return;
+    await saveFlyingDayField("runway", true);
   });
 
-  $("windSpeed").addEventListener("input", () => {
-    flyingDayDirtyFields.add("windSpeed");
-    $("windSpeed").value = $("windSpeed").value.replace(/\D/g, "").slice(0, 2);
-    scheduleFlyingDayFieldSave("windSpeed", { confirmRunwayChange: false });
+  $("windDirection").addEventListener("input", event => {
+    if (!event.isTrusted || flyingDayState.suppressEvents) return;
+    $("windDirection").value = $("windDirection").value.replace(/\D/g,"").slice(0,3);
+    scheduleFlyingDayFieldSave("windDirection");
+  });
+  $("windDirection").addEventListener("blur", async () => {
+    if (flyingDayState.suppressEvents) return;
+    const timer = flyingDayState.timers.get("windDirection");
+    if (timer) clearTimeout(timer);
+    flyingDayState.timers.delete("windDirection");
+    await saveFlyingDayField("windDirection", false);
+  });
+
+  $("windSpeed").addEventListener("input", event => {
+    if (!event.isTrusted || flyingDayState.suppressEvents) return;
+    $("windSpeed").value = $("windSpeed").value.replace(/\D/g,"").slice(0,2);
+    scheduleFlyingDayFieldSave("windSpeed");
   });
   $("windSpeed").addEventListener("blur", async () => {
-    if (!flyingDayDirtyFields.has("windSpeed")) return;
-    const saved = await saveDayFields(["windSpeed"], false);
-    if (saved) flyingDayDirtyFields.delete("windSpeed");
+    if (flyingDayState.suppressEvents) return;
+    const timer = flyingDayState.timers.get("windSpeed");
+    if (timer) clearTimeout(timer);
+    flyingDayState.timers.delete("windSpeed");
+    await saveFlyingDayField("windSpeed", false);
   });
-  $("windSpeed").addEventListener("change", async () => {
-    flyingDayDirtyFields.add("windSpeed");
-    const saved = await saveDayFields(["windSpeed"], false);
-    if (saved) flyingDayDirtyFields.delete("windSpeed");
-  });
-  $("winchFlightBtn").addEventListener("click", () => openEntry("winch"));
-  $("aerotowFlightBtn").addEventListener("click", () => openEntry("aerotow"));
-  document.querySelectorAll("[data-time-target]").forEach(b => b.addEventListener("click", () => {
-    $(b.dataset.timeTarget).value = timeHHMM();
-    $("duration").value = calcDuration($("takeoff").value, $("landing").value);
-    $("saveFlightBtn").textContent = $("landing").value ? "SAVE COMPLETED FLIGHT" : "SAVE AS AIRBORNE";
-  }));
+
   $("flightForm").addEventListener("submit", saveFlight);
   moveFocusWhenChosen("p1", "p2", DATA.names);
   moveFocusWhenChosen("p2", "payee", [...DATA.names, "SOLO"]);
@@ -928,7 +897,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=1211").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=130").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }
