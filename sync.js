@@ -288,7 +288,7 @@ async function queueSyncRecord(recordType, recordId, action = "upsert") {
 
 
 async function cleanupLegacyFlyingDayQueue() {
-  const cleanupKey = "operationslogs-flying-day-queue-cleanup-v1210";
+  const cleanupKey = "operationslogs-flying-day-queue-cleanup-v1211";
   if (localStorage.getItem(cleanupKey) === "done") return false;
 
   const items = await allFromStore("syncQueue");
@@ -356,54 +356,27 @@ async function syncFlightQueueItem(item) {
   await put("flights", synced);
 }
 
-async function ensureRemoteFlyingDay(date) {
-  const local = await get("days", date);
-  const { data: existing, error: selectError } = await operatorSupabase
-    .from("flying_days")
-    .select("*")
-    .eq("date", date)
-    .maybeSingle();
-  if (selectError) throw selectError;
-  if (existing) return existing;
-
-  const { data, error } = await operatorSupabase
-    .from("flying_days")
-    .insert({
-      date,
-      day: local?.day || "",
-      runway: local?.runway || "",
-      wind_direction: local?.windDirection || "",
-      wind_speed: local?.windSpeed || "",
-      modified_by_device: currentDevice?.id || null,
-      modified_at: new Date().toISOString()
-    })
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
-}
-
 async function syncDayFieldQueueItem(item) {
-  await ensureRemoteFlyingDay(item.recordId);
-  const column = DAY_FIELD_COLUMN_MAP[item.fieldName];
-  if (!column) throw new Error(`Unknown Flying Day field: ${item.fieldName}`);
-
   const { data, error } = await operatorSupabase
-    .from("flying_days")
-    .update({
-      [column]: item.value ?? "",
+    .from("flying_day_values")
+    .upsert({
+      date: item.recordId,
+      field_name: item.fieldName,
+      value: item.value ?? "",
       modified_by_device: currentDevice?.id || null,
       modified_at: item.modifiedAt || new Date().toISOString()
-    })
-    .eq("date", item.recordId)
+    }, { onConflict: "date,field_name" })
     .select()
     .single();
+
   if (error) throw error;
 
+  // Acknowledge only this exact field. Never write any other Flying Day value.
   const local = (await get("days", item.recordId)) || { date: item.recordId };
-  local[item.fieldName] = item.value ?? "";
+  local[item.fieldName] = data.value ?? "";
   local.modifiedAt = data.modified_at;
   await put("days", local);
+
   return data;
 }
 
@@ -533,48 +506,80 @@ async function pullFlights() {
 }
 
 
-async function forcePullFlyingDays() {
+async function readFlyingDayValueRows() {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 31);
 
   const { data, error } = await operatorSupabase
-    .from("flying_days")
+    .from("flying_day_values")
     .select("*")
     .gte("date", cutoff.toISOString().slice(0, 10));
-  if (error) throw error;
 
-  for (const row of data || []) {
-    await put("days", {
-      date: row.date,
-      day: row.day || "",
-      runway: row.runway || "",
-      windDirection: row.wind_direction || "",
-      windSpeed: row.wind_speed || "",
-      modifiedAt: row.modified_at
-    });
+  if (error) throw error;
+  return data || [];
+}
+
+async function forcePullFlyingDays() {
+  const rows = await readFlyingDayValueRows();
+  const grouped = {};
+
+  for (const row of rows) {
+    if (!grouped[row.date]) grouped[row.date] = {};
+    grouped[row.date][row.field_name] = row;
+  }
+
+  for (const [date, fields] of Object.entries(grouped)) {
+    const local = (await get("days", date)) || {
+      date,
+      day: new Date(date + "T12:00:00").toLocaleDateString(
+        "en-GB", { weekday: "long" }
+      ).toUpperCase(),
+      runway: "",
+      windDirection: "",
+      windSpeed: ""
+    };
+
+    for (const fieldName of ["day", "runway", "windDirection", "windSpeed"]) {
+      if (fields[fieldName]) local[fieldName] = fields[fieldName].value ?? "";
+    }
+
+    local.modifiedAt = new Date().toISOString();
+    await put("days", local);
   }
 }
 
 async function pullFlyingDays() {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 31);
-  const { data, error } = await operatorSupabase
-    .from("flying_days")
-    .select("*")
-    .gte("date", cutoff.toISOString().slice(0, 10));
-  if (error) throw error;
+  const rows = await readFlyingDayValueRows();
+  const grouped = {};
 
-  for (const row of data || []) {
-    const local = (await get("days", row.date)) || { date: row.date };
-    const pending = await pendingDayFields(row.date);
-    await put("days", {
-      date: row.date,
-      day: Object.prototype.hasOwnProperty.call(pending, "day") ? (local.day || "") : (row.day || ""),
-      runway: Object.prototype.hasOwnProperty.call(pending, "runway") ? (local.runway || "") : (row.runway || ""),
-      windDirection: Object.prototype.hasOwnProperty.call(pending, "windDirection") ? (local.windDirection || "") : (row.wind_direction || ""),
-      windSpeed: Object.prototype.hasOwnProperty.call(pending, "windSpeed") ? (local.windSpeed || "") : (row.wind_speed || ""),
-      modifiedAt: row.modified_at
-    });
+  for (const row of rows) {
+    if (!grouped[row.date]) grouped[row.date] = {};
+    grouped[row.date][row.field_name] = row;
+  }
+
+  for (const [date, fields] of Object.entries(grouped)) {
+    const local = (await get("days", date)) || {
+      date,
+      day: new Date(date + "T12:00:00").toLocaleDateString(
+        "en-GB", { weekday: "long" }
+      ).toUpperCase(),
+      runway: "",
+      windDirection: "",
+      windSpeed: ""
+    };
+    const pending = await pendingDayFields(date);
+
+    for (const fieldName of ["day", "runway", "windDirection", "windSpeed"]) {
+      if (
+        fields[fieldName] &&
+        !Object.prototype.hasOwnProperty.call(pending, fieldName)
+      ) {
+        local[fieldName] = fields[fieldName].value ?? "";
+      }
+    }
+
+    local.modifiedAt = new Date().toISOString();
+    await put("days", local);
   }
 }
 
@@ -668,22 +673,30 @@ function subscribeRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "master_lists" }, async () => {
       await pullMasterLists();
     })
-    .on("postgres_changes", { event: "*", schema: "public", table: "flying_days" }, async payload => {
+    .on("postgres_changes", { event: "*", schema: "public", table: "flying_day_values" }, async payload => {
       if (payload.eventType !== "DELETE" && payload.new) {
         const row = payload.new;
-        const local = (await get("days", row.date)) || { date: row.date };
         const pending = await pendingDayFields(row.date);
-        await put("days", {
-          date: row.date,
-          day: Object.prototype.hasOwnProperty.call(pending, "day") ? (local.day || "") : (row.day || ""),
-          runway: Object.prototype.hasOwnProperty.call(pending, "runway") ? (local.runway || "") : (row.runway || ""),
-          windDirection: Object.prototype.hasOwnProperty.call(pending, "windDirection") ? (local.windDirection || "") : (row.wind_direction || ""),
-          windSpeed: Object.prototype.hasOwnProperty.call(pending, "windSpeed") ? (local.windSpeed || "") : (row.wind_speed || ""),
-          modifiedAt: row.modified_at
-        });
+
+        if (!Object.prototype.hasOwnProperty.call(pending, row.field_name)) {
+          const local = (await get("days", row.date)) || {
+            date: row.date,
+            day: new Date(row.date + "T12:00:00").toLocaleDateString(
+              "en-GB", { weekday: "long" }
+            ).toUpperCase(),
+            runway: "",
+            windDirection: "",
+            windSpeed: ""
+          };
+
+          local[row.field_name] = row.value ?? "";
+          local.modifiedAt = row.modified_at;
+          await put("days", local);
+        }
       } else {
         await pullFlyingDays();
       }
+
       await refreshVisibleFlyingDay();
     })
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "devices" }, async payload => {

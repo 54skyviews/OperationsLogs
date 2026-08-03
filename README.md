@@ -296,3 +296,20 @@ by earlier Version 1.2 releases.
 
 After installing Version 1.2.10, re-enter any runway or wind change that had not
 successfully reached the desktop before the update.
+
+
+## Version 1.2.11 correction
+
+Version 1.2.11 replaces the `flying_days` whole-row cloud record with
+`flying_day_values`, which stores one independent row for each value:
+
+- Day
+- Runway
+- Wind direction
+- Wind speed
+
+A device changing runway can no longer transmit or overwrite either wind value.
+A device changing a wind value can no longer alter the runway or the other wind
+value.
+
+Run `SUPABASE_1.2.11_PATCH.sql` once before uploading this release.

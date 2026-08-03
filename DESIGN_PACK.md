@@ -317,3 +317,11 @@ Earlier releases created incompatible whole-day and merged field queue records.
 Version 1.2.10 performs a one-time removal of Flying Day queue entries only, then
 loads the authoritative Flying Day row from Supabase. Flight queues are untouched.
 Legacy whole-day records are discarded rather than replayed.
+
+
+## Version 1.2.11 — Per-field Supabase rows
+
+The previous `flying_days` table represented all Flying Day values in one row.
+Version 1.2.11 uses `flying_day_values`, keyed by `(date, field_name)`. Each
+Realtime event, queue item, database update and acknowledgement therefore
+contains exactly one field and cannot carry stale values for another field.
