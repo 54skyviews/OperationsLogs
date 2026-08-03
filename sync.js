@@ -247,7 +247,8 @@ async function queueFlyingDayPatch(date, patch, modifiedAt) {
     patch: { ...(existing?.patch || {}), ...patch },
     modifiedAt: modifiedAt || new Date().toISOString(),
     queuedAt: existing?.queuedAt || new Date().toISOString(),
-    attempts: existing?.attempts || 0
+    attempts: existing?.attempts || 0,
+    version: (existing?.version || 0) + 1
   });
   updatePendingCount();
   if (navigator.onLine) setTimeout(processSyncQueue, 0);
@@ -328,7 +329,7 @@ async function syncFlightQueueItem(item) {
 
 async function syncDayQueueItem(item) {
   const day = await get("days", item.recordId);
-  if (!day) return;
+  if (!day) return null;
 
   const patch = item.patch && Object.keys(item.patch).length
     ? item.patch
@@ -338,6 +339,7 @@ async function syncDayQueueItem(item) {
         windDirection: day.windDirection || "",
         windSpeed: day.windSpeed || ""
       };
+
   const remotePatch = {
     modified_by_device: currentDevice?.id || null,
     modified_at: item.modifiedAt || day.modifiedAt || new Date().toISOString()
@@ -350,19 +352,21 @@ async function syncDayQueueItem(item) {
 
   const { data: existing, error: selectError } = await operatorSupabase
     .from("flying_days")
-    .select("date")
+    .select("*")
     .eq("date", item.recordId)
     .maybeSingle();
   if (selectError) throw selectError;
 
-  let error;
+  let data, error;
   if (existing) {
-    ({ error } = await operatorSupabase
+    ({ data, error } = await operatorSupabase
       .from("flying_days")
       .update(remotePatch)
-      .eq("date", item.recordId));
+      .eq("date", item.recordId)
+      .select()
+      .single());
   } else {
-    ({ error } = await operatorSupabase
+    ({ data, error } = await operatorSupabase
       .from("flying_days")
       .insert({
         date: item.recordId,
@@ -371,9 +375,36 @@ async function syncDayQueueItem(item) {
         wind_direction: day.windDirection || "",
         wind_speed: day.windSpeed || "",
         ...remotePatch
-      }));
+      })
+      .select()
+      .single());
   }
   if (error) throw error;
+
+  const latestQueue = await get("syncQueue", item.id);
+  const newerPatch = latestQueue && latestQueue.version !== item.version
+    ? (latestQueue.patch || {})
+    : {};
+  const local = await get("days", item.recordId);
+
+  await put("days", {
+    date: data.date,
+    day: Object.prototype.hasOwnProperty.call(newerPatch, "day")
+      ? (local?.day || "")
+      : (data.day || ""),
+    runway: Object.prototype.hasOwnProperty.call(newerPatch, "runway")
+      ? (local?.runway || "")
+      : (data.runway || ""),
+    windDirection: Object.prototype.hasOwnProperty.call(newerPatch, "windDirection")
+      ? (local?.windDirection || "")
+      : (data.wind_direction || ""),
+    windSpeed: Object.prototype.hasOwnProperty.call(newerPatch, "windSpeed")
+      ? (local?.windSpeed || "")
+      : (data.wind_speed || ""),
+    modifiedAt: data.modified_at
+  });
+
+  return data;
 }
 
 async function syncMasterQueueItem(item) {
@@ -419,15 +450,23 @@ async function processSyncQueue() {
       if (item.recordType === "master" && !adminAccess) continue;
 
       try {
-        if (item.recordType === "flight") await syncFlightQueueItem(item);
-        else if (item.recordType === "day") await syncDayQueueItem(item);
-        else if (item.recordType === "master") await syncMasterQueueItem(item);
-        else {
+        if (item.recordType === "flight") {
+          await syncFlightQueueItem(item);
+          await removeQueueItem(item.id);
+        } else if (item.recordType === "day") {
+          await syncDayQueueItem(item);
+          const latest = await get("syncQueue", item.id);
+          if (!latest || latest.version === item.version) {
+            await removeQueueItem(item.id);
+          }
+        } else if (item.recordType === "master") {
+          await syncMasterQueueItem(item);
+          await removeQueueItem(item.id);
+        } else {
           // Remove obsolete queue entries created by pre-1.2 versions.
           await removeQueueItem(item.id);
           continue;
         }
-        await removeQueueItem(item.id);
       } catch (error) {
         item.attempts = (item.attempts || 0) + 1;
         item.lastError = error.message;

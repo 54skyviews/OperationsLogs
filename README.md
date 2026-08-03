@@ -267,3 +267,12 @@ This release prevents mobile Flying Day values from reverting while being edited
 - An older airborne record cannot replace a pending completed flight.
 - Supabase must return the matching landing status/time before pending is cleared.
 - LAND NOW and manual landing both trigger immediate reconciliation.
+
+
+## Version 1.2.8 correction
+
+- Runway, wind direction and wind speed now use separate save timers.
+- Flying Day queue changes carry a version number.
+- A newer field change cannot be deleted when an older upload finishes.
+- Supabase returns and acknowledges the updated Flying Day row.
+- Pending fields remain protected until their exact queue version is acknowledged.

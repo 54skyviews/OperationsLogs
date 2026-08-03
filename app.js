@@ -6,7 +6,7 @@ let db;
 let currentType = "winch";
 let editingFlightId = null;
 let currentAdminList = "names";
-let flyingDaySaveTimer = null;
+const flyingDaySaveTimers = new Map();
 let lastLoadedRunway = "";
 const flyingDayDirtyFields = new Set();
 
@@ -206,19 +206,22 @@ function wireValidation() {
 async function loadDay() {
   const date = $("flyingDate").value;
   const day = await get("days", date);
+  const pendingPatch = typeof pendingDayPatch === "function"
+    ? await pendingDayPatch(date)
+    : {};
 
   if (day) {
-    if (!flyingDayDirtyFields.has("day")) {
+    if (!flyingDayDirtyFields.has("day") && !Object.prototype.hasOwnProperty.call(pendingPatch, "day")) {
       $("flyingDay").value = day.day || new Date(date + "T12:00:00").toLocaleDateString("en-GB", {weekday:"long"}).toUpperCase();
     }
-    if (!flyingDayDirtyFields.has("runway")) {
+    if (!flyingDayDirtyFields.has("runway") && !Object.prototype.hasOwnProperty.call(pendingPatch, "runway")) {
       $("runway").value = day.runway || DATA.runways[0] || "";
       lastLoadedRunway = day.runway || "";
     }
-    if (!flyingDayDirtyFields.has("windDirection")) {
+    if (!flyingDayDirtyFields.has("windDirection") && !Object.prototype.hasOwnProperty.call(pendingPatch, "windDirection")) {
       $("windDirection").value = day.windDirection || "";
     }
-    if (!flyingDayDirtyFields.has("windSpeed")) {
+    if (!flyingDayDirtyFields.has("windSpeed") && !Object.prototype.hasOwnProperty.call(pendingPatch, "windSpeed")) {
       $("windSpeed").value = day.windSpeed || "";
     }
   } else {
@@ -285,8 +288,10 @@ async function saveDayFields(changedFields, confirmRunwayChange = true) {
 
 function scheduleFlyingDayFieldSave(fieldName, options = {}) {
   flyingDayDirtyFields.add(fieldName);
-  if (flyingDaySaveTimer) clearTimeout(flyingDaySaveTimer);
-  flyingDaySaveTimer = setTimeout(async () => {
+  const existingTimer = flyingDaySaveTimers.get(fieldName);
+  if (existingTimer) clearTimeout(existingTimer);
+
+  const timer = setTimeout(async () => {
     try {
       const saved = await saveDayFields(
         [fieldName],
@@ -294,10 +299,14 @@ function scheduleFlyingDayFieldSave(fieldName, options = {}) {
       );
       if (saved) flyingDayDirtyFields.delete(fieldName);
     } catch (error) {
-      console.error("Flying day auto-save failed:", error);
+      console.error(`Flying day ${fieldName} auto-save failed:`, error);
       setSyncStatus("SYNC PROBLEM · FLYING DAY", "error");
+    } finally {
+      flyingDaySaveTimers.delete(fieldName);
     }
   }, 700);
+
+  flyingDaySaveTimers.set(fieldName, timer);
 }
 
 function openEntry(type) {
@@ -907,7 +916,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=127").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=128").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }

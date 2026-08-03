@@ -297,3 +297,10 @@ and keyboard events from restoring stale values before the local save completes.
 ## Version 1.2.7 — Pending flight protection
 
 A flight remains pending until Supabase returns a row matching local status, landing time and duration. Incoming stale airborne rows cannot replace a pending local completed flight.
+
+
+## Version 1.2.8 — Versioned Flying Day queue
+
+Each Flying Day queue update increments a version. Queue removal occurs only when
+the uploaded version is still current. Independent field timers prevent wind
+direction and wind speed from cancelling each other's saves.
