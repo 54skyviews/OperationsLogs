@@ -253,7 +253,7 @@ async function queueFlyingDayField(date, fieldName, value, modifiedAt) {
     fieldName,
     value: value ?? "",
     modifiedAt: modifiedAt || new Date().toISOString(),
-    queuedAt: existing?.queuedAt || new Date().toISOString(),
+    queuedAt: new Date().toISOString(),
     attempts: existing?.attempts || 0,
     version: (existing?.version || 0) + 1
   });
@@ -286,6 +286,22 @@ async function queueSyncRecord(recordType, recordId, action = "upsert") {
   if (navigator.onLine) setTimeout(processSyncQueue, 0);
 }
 
+
+async function cleanupLegacyFlyingDayQueue() {
+  const cleanupKey = "operationslogs-flying-day-queue-cleanup-v1210";
+  if (localStorage.getItem(cleanupKey) === "done") return false;
+
+  const items = await allFromStore("syncQueue");
+  for (const item of items) {
+    if (item.recordType === "day" || item.recordType === "dayField") {
+      await removeQueueItem(item.id);
+    }
+  }
+
+  localStorage.setItem(cleanupKey, "done");
+  return true;
+}
+
 async function updatePendingCount() {
   if (!db) return;
   const pending = await allFromStore("syncQueue");
@@ -305,7 +321,7 @@ async function updatePendingCount() {
     return;
   }
   if (operationalWaiting > 0) {
-    setSyncStatus(`ONLINE · ${operationalWaiting} FLIGHT CHANGES WAITING`, "pending");
+    setSyncStatus(`ONLINE · ${operationalWaiting} CHANGES WAITING`, "pending");
     return;
   }
   if (masterWaiting > 0 && !adminAccess) {
@@ -444,13 +460,7 @@ async function processSyncQueue() {
             await removeQueueItem(item.id);
           }
         } else if (item.recordType === "day") {
-          const localDay = await get("days", item.recordId);
-          if (localDay) {
-            await queueFlyingDayField(item.recordId, "day", localDay.day || "", localDay.modifiedAt);
-            await queueFlyingDayField(item.recordId, "runway", localDay.runway || "", localDay.modifiedAt);
-            await queueFlyingDayField(item.recordId, "windDirection", localDay.windDirection || "", localDay.modifiedAt);
-            await queueFlyingDayField(item.recordId, "windSpeed", localDay.windSpeed || "", localDay.modifiedAt);
-          }
+          // Legacy whole-day records can contain stale blank fields. Never replay them.
           await removeQueueItem(item.id);
         } else if (item.recordType === "master") {
           await syncMasterQueueItem(item);
@@ -520,6 +530,29 @@ async function pullFlights() {
 
   if (error) throw error;
   for (const row of data || []) await applyRemoteFlight(row);
+}
+
+
+async function forcePullFlyingDays() {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 31);
+
+  const { data, error } = await operatorSupabase
+    .from("flying_days")
+    .select("*")
+    .gte("date", cutoff.toISOString().slice(0, 10));
+  if (error) throw error;
+
+  for (const row of data || []) {
+    await put("days", {
+      date: row.date,
+      day: row.day || "",
+      runway: row.runway || "",
+      windDirection: row.wind_direction || "",
+      windSpeed: row.wind_speed || "",
+      modifiedAt: row.modified_at
+    });
+  }
 }
 
 async function pullFlyingDays() {
@@ -681,6 +714,7 @@ async function initializeCloudSync() {
     setSyncStatus("CONNECTING…", "pending");
     await ensureOperatorSession();
     await ensureDeviceRegistration();
+    const flyingDayQueueWasCleaned = await cleanupLegacyFlyingDayQueue();
     startApprovalWatcher();
     await refreshCurrentDeviceStatus();
 
@@ -700,6 +734,10 @@ async function initializeCloudSync() {
       return;
     }
 
+    if (flyingDayQueueWasCleaned) {
+      await forcePullFlyingDays();
+      await refreshVisibleFlyingDay();
+    }
     await pullCloudData();
     await processSyncQueue();
     subscribeRealtime();

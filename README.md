@@ -281,3 +281,18 @@ This release prevents mobile Flying Day values from reverting while being edited
 ## Version 1.2.9 correction
 
 Runway, wind direction and wind speed now have completely separate queue records and database updates. Updating one field can no longer alter either of the other fields. Android change events are handled explicitly.
+
+
+## Version 1.2.10 correction
+
+The remaining Flying Day fault was caused by stale queue records left on devices
+by earlier Version 1.2 releases.
+
+- On first opening Version 1.2.10, legacy Flying Day queue records are removed.
+- The current authoritative runway and wind values are then downloaded from Supabase.
+- Old whole-day queue records are never converted or replayed.
+- New runway, wind-direction and wind-speed updates remain independent.
+- Flight queues and locally stored flights are not removed by this cleanup.
+
+After installing Version 1.2.10, re-enter any runway or wind change that had not
+successfully reached the desktop before the update.

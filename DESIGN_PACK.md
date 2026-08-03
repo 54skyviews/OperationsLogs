@@ -309,3 +309,11 @@ direction and wind speed from cancelling each other's saves.
 ## Version 1.2.9 — Independent Flying Day queues
 
 Each Flying Day field has its own queue key and updates only its corresponding Supabase column.
+
+
+## Version 1.2.10 — Legacy queue reset
+
+Earlier releases created incompatible whole-day and merged field queue records.
+Version 1.2.10 performs a one-time removal of Flying Day queue entries only, then
+loads the authoritative Flying Day row from Supabase. Flight queues are untouched.
+Legacy whole-day records are discarded rather than replayed.
