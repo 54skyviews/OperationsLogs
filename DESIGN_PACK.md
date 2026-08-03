@@ -304,3 +304,8 @@ A flight remains pending until Supabase returns a row matching local status, lan
 Each Flying Day queue update increments a version. Queue removal occurs only when
 the uploaded version is still current. Independent field timers prevent wind
 direction and wind speed from cancelling each other's saves.
+
+
+## Version 1.2.9 — Independent Flying Day queues
+
+Each Flying Day field has its own queue key and updates only its corresponding Supabase column.

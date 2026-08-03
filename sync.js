@@ -236,15 +236,22 @@ async function removeQueueItem(id) {
 }
 
 
-async function queueFlyingDayPatch(date, patch, modifiedAt) {
-  const queueId = `day:${date}`;
+const DAY_FIELD_COLUMN_MAP = {
+  day: "day",
+  runway: "runway",
+  windDirection: "wind_direction",
+  windSpeed: "wind_speed"
+};
+
+async function queueFlyingDayField(date, fieldName, value, modifiedAt) {
+  const queueId = `day:${date}:${fieldName}`;
   const existing = await get("syncQueue", queueId);
   await put("syncQueue", {
     id: queueId,
-    recordType: "day",
+    recordType: "dayField",
     recordId: date,
-    action: "patch",
-    patch: { ...(existing?.patch || {}), ...patch },
+    fieldName,
+    value: value ?? "",
     modifiedAt: modifiedAt || new Date().toISOString(),
     queuedAt: existing?.queuedAt || new Date().toISOString(),
     attempts: existing?.attempts || 0,
@@ -254,9 +261,15 @@ async function queueFlyingDayPatch(date, patch, modifiedAt) {
   if (navigator.onLine) setTimeout(processSyncQueue, 0);
 }
 
-async function pendingDayPatch(date) {
-  const item = await get("syncQueue", `day:${date}`);
-  return item?.recordType === "day" ? (item.patch || {}) : {};
+async function pendingDayFields(date) {
+  const items = await allFromStore("syncQueue");
+  const pending = {};
+  for (const item of items) {
+    if (item.recordType === "dayField" && item.recordId === date) {
+      pending[item.fieldName] = item.value;
+    }
+  }
+  return pending;
 }
 
 async function queueSyncRecord(recordType, recordId, action = "upsert") {
@@ -327,83 +340,54 @@ async function syncFlightQueueItem(item) {
   await put("flights", synced);
 }
 
-async function syncDayQueueItem(item) {
-  const day = await get("days", item.recordId);
-  if (!day) return null;
-
-  const patch = item.patch && Object.keys(item.patch).length
-    ? item.patch
-    : {
-        day: day.day || "",
-        runway: day.runway || "",
-        windDirection: day.windDirection || "",
-        windSpeed: day.windSpeed || ""
-      };
-
-  const remotePatch = {
-    modified_by_device: currentDevice?.id || null,
-    modified_at: item.modifiedAt || day.modifiedAt || new Date().toISOString()
-  };
-
-  if (Object.prototype.hasOwnProperty.call(patch, "day")) remotePatch.day = patch.day || "";
-  if (Object.prototype.hasOwnProperty.call(patch, "runway")) remotePatch.runway = patch.runway || "";
-  if (Object.prototype.hasOwnProperty.call(patch, "windDirection")) remotePatch.wind_direction = patch.windDirection || "";
-  if (Object.prototype.hasOwnProperty.call(patch, "windSpeed")) remotePatch.wind_speed = patch.windSpeed || "";
-
+async function ensureRemoteFlyingDay(date) {
+  const local = await get("days", date);
   const { data: existing, error: selectError } = await operatorSupabase
     .from("flying_days")
     .select("*")
-    .eq("date", item.recordId)
+    .eq("date", date)
     .maybeSingle();
   if (selectError) throw selectError;
+  if (existing) return existing;
 
-  let data, error;
-  if (existing) {
-    ({ data, error } = await operatorSupabase
-      .from("flying_days")
-      .update(remotePatch)
-      .eq("date", item.recordId)
-      .select()
-      .single());
-  } else {
-    ({ data, error } = await operatorSupabase
-      .from("flying_days")
-      .insert({
-        date: item.recordId,
-        day: day.day || "",
-        runway: day.runway || "",
-        wind_direction: day.windDirection || "",
-        wind_speed: day.windSpeed || "",
-        ...remotePatch
-      })
-      .select()
-      .single());
-  }
+  const { data, error } = await operatorSupabase
+    .from("flying_days")
+    .insert({
+      date,
+      day: local?.day || "",
+      runway: local?.runway || "",
+      wind_direction: local?.windDirection || "",
+      wind_speed: local?.windSpeed || "",
+      modified_by_device: currentDevice?.id || null,
+      modified_at: new Date().toISOString()
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async function syncDayFieldQueueItem(item) {
+  await ensureRemoteFlyingDay(item.recordId);
+  const column = DAY_FIELD_COLUMN_MAP[item.fieldName];
+  if (!column) throw new Error(`Unknown Flying Day field: ${item.fieldName}`);
+
+  const { data, error } = await operatorSupabase
+    .from("flying_days")
+    .update({
+      [column]: item.value ?? "",
+      modified_by_device: currentDevice?.id || null,
+      modified_at: item.modifiedAt || new Date().toISOString()
+    })
+    .eq("date", item.recordId)
+    .select()
+    .single();
   if (error) throw error;
 
-  const latestQueue = await get("syncQueue", item.id);
-  const newerPatch = latestQueue && latestQueue.version !== item.version
-    ? (latestQueue.patch || {})
-    : {};
-  const local = await get("days", item.recordId);
-
-  await put("days", {
-    date: data.date,
-    day: Object.prototype.hasOwnProperty.call(newerPatch, "day")
-      ? (local?.day || "")
-      : (data.day || ""),
-    runway: Object.prototype.hasOwnProperty.call(newerPatch, "runway")
-      ? (local?.runway || "")
-      : (data.runway || ""),
-    windDirection: Object.prototype.hasOwnProperty.call(newerPatch, "windDirection")
-      ? (local?.windDirection || "")
-      : (data.wind_direction || ""),
-    windSpeed: Object.prototype.hasOwnProperty.call(newerPatch, "windSpeed")
-      ? (local?.windSpeed || "")
-      : (data.wind_speed || ""),
-    modifiedAt: data.modified_at
-  });
-
+  const local = (await get("days", item.recordId)) || { date: item.recordId };
+  local[item.fieldName] = item.value ?? "";
+  local.modifiedAt = data.modified_at;
+  await put("days", local);
   return data;
 }
 
@@ -453,12 +437,21 @@ async function processSyncQueue() {
         if (item.recordType === "flight") {
           await syncFlightQueueItem(item);
           await removeQueueItem(item.id);
-        } else if (item.recordType === "day") {
-          await syncDayQueueItem(item);
+        } else if (item.recordType === "dayField") {
+          await syncDayFieldQueueItem(item);
           const latest = await get("syncQueue", item.id);
           if (!latest || latest.version === item.version) {
             await removeQueueItem(item.id);
           }
+        } else if (item.recordType === "day") {
+          const localDay = await get("days", item.recordId);
+          if (localDay) {
+            await queueFlyingDayField(item.recordId, "day", localDay.day || "", localDay.modifiedAt);
+            await queueFlyingDayField(item.recordId, "runway", localDay.runway || "", localDay.modifiedAt);
+            await queueFlyingDayField(item.recordId, "windDirection", localDay.windDirection || "", localDay.modifiedAt);
+            await queueFlyingDayField(item.recordId, "windSpeed", localDay.windSpeed || "", localDay.modifiedAt);
+          }
+          await removeQueueItem(item.id);
         } else if (item.recordType === "master") {
           await syncMasterQueueItem(item);
           await removeQueueItem(item.id);
@@ -539,23 +532,14 @@ async function pullFlyingDays() {
   if (error) throw error;
 
   for (const row of data || []) {
-    const local = await get("days", row.date);
-    const pending = await pendingDayPatch(row.date);
-
+    const local = (await get("days", row.date)) || { date: row.date };
+    const pending = await pendingDayFields(row.date);
     await put("days", {
       date: row.date,
-      day: Object.prototype.hasOwnProperty.call(pending, "day")
-        ? (local?.day || "")
-        : (row.day || ""),
-      runway: Object.prototype.hasOwnProperty.call(pending, "runway")
-        ? (local?.runway || "")
-        : (row.runway || ""),
-      windDirection: Object.prototype.hasOwnProperty.call(pending, "windDirection")
-        ? (local?.windDirection || "")
-        : (row.wind_direction || ""),
-      windSpeed: Object.prototype.hasOwnProperty.call(pending, "windSpeed")
-        ? (local?.windSpeed || "")
-        : (row.wind_speed || ""),
+      day: Object.prototype.hasOwnProperty.call(pending, "day") ? (local.day || "") : (row.day || ""),
+      runway: Object.prototype.hasOwnProperty.call(pending, "runway") ? (local.runway || "") : (row.runway || ""),
+      windDirection: Object.prototype.hasOwnProperty.call(pending, "windDirection") ? (local.windDirection || "") : (row.wind_direction || ""),
+      windSpeed: Object.prototype.hasOwnProperty.call(pending, "windSpeed") ? (local.windSpeed || "") : (row.wind_speed || ""),
       modifiedAt: row.modified_at
     });
   }
@@ -654,23 +638,14 @@ function subscribeRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "flying_days" }, async payload => {
       if (payload.eventType !== "DELETE" && payload.new) {
         const row = payload.new;
-        const local = await get("days", row.date);
-        const pending = await pendingDayPatch(row.date);
-
+        const local = (await get("days", row.date)) || { date: row.date };
+        const pending = await pendingDayFields(row.date);
         await put("days", {
           date: row.date,
-          day: Object.prototype.hasOwnProperty.call(pending, "day")
-            ? (local?.day || "")
-            : (row.day || ""),
-          runway: Object.prototype.hasOwnProperty.call(pending, "runway")
-            ? (local?.runway || "")
-            : (row.runway || ""),
-          windDirection: Object.prototype.hasOwnProperty.call(pending, "windDirection")
-            ? (local?.windDirection || "")
-            : (row.wind_direction || ""),
-          windSpeed: Object.prototype.hasOwnProperty.call(pending, "windSpeed")
-            ? (local?.windSpeed || "")
-            : (row.wind_speed || ""),
+          day: Object.prototype.hasOwnProperty.call(pending, "day") ? (local.day || "") : (row.day || ""),
+          runway: Object.prototype.hasOwnProperty.call(pending, "runway") ? (local.runway || "") : (row.runway || ""),
+          windDirection: Object.prototype.hasOwnProperty.call(pending, "windDirection") ? (local.windDirection || "") : (row.wind_direction || ""),
+          windSpeed: Object.prototype.hasOwnProperty.call(pending, "windSpeed") ? (local.windSpeed || "") : (row.wind_speed || ""),
           modifiedAt: row.modified_at
         });
       } else {

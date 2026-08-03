@@ -276,3 +276,8 @@ This release prevents mobile Flying Day values from reverting while being edited
 - A newer field change cannot be deleted when an older upload finishes.
 - Supabase returns and acknowledges the updated Flying Day row.
 - Pending fields remain protected until their exact queue version is acknowledged.
+
+
+## Version 1.2.9 correction
+
+Runway, wind direction and wind speed now have completely separate queue records and database updates. Updating one field can no longer alter either of the other fields. Android change events are handled explicitly.

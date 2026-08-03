@@ -206,8 +206,8 @@ function wireValidation() {
 async function loadDay() {
   const date = $("flyingDate").value;
   const day = await get("days", date);
-  const pendingPatch = typeof pendingDayPatch === "function"
-    ? await pendingDayPatch(date)
+  const pendingPatch = typeof pendingDayFields === "function"
+    ? await pendingDayFields(date)
     : {};
 
   if (day) {
@@ -278,7 +278,9 @@ async function saveDayFields(changedFields, confirmRunwayChange = true) {
 
   if (changedFields.includes("runway")) lastLoadedRunway = value.runway;
 
-  await queueFlyingDayPatch(date, patch, modifiedAt);
+  for (const [fieldName, fieldValue] of Object.entries(patch)) {
+    await queueFlyingDayField(date, fieldName, fieldValue, modifiedAt);
+  }
 
   if (navigator.onLine && currentDevice?.approved) {
     setTimeout(() => reconcileCloudState("flying day field saved"), 500);
@@ -806,6 +808,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     const saved = await saveDayFields(["windDirection"], false);
     if (saved) flyingDayDirtyFields.delete("windDirection");
   });
+  $("windDirection").addEventListener("change", async () => {
+    flyingDayDirtyFields.add("windDirection");
+    const saved = await saveDayFields(["windDirection"], false);
+    if (saved) flyingDayDirtyFields.delete("windDirection");
+  });
 
   $("windSpeed").addEventListener("input", () => {
     flyingDayDirtyFields.add("windSpeed");
@@ -814,6 +821,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   $("windSpeed").addEventListener("blur", async () => {
     if (!flyingDayDirtyFields.has("windSpeed")) return;
+    const saved = await saveDayFields(["windSpeed"], false);
+    if (saved) flyingDayDirtyFields.delete("windSpeed");
+  });
+  $("windSpeed").addEventListener("change", async () => {
+    flyingDayDirtyFields.add("windSpeed");
     const saved = await saveDayFields(["windSpeed"], false);
     if (saved) flyingDayDirtyFields.delete("windSpeed");
   });
@@ -916,7 +928,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=128").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=129").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }
