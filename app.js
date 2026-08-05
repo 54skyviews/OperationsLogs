@@ -805,6 +805,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     await saveFlyingDayField("windSpeed", false);
   });
 
+  $("winchFlightBtn").addEventListener("click", () => openEntry("winch"));
+  $("aerotowFlightBtn").addEventListener("click", () => openEntry("aerotow"));
   $("flightForm").addEventListener("submit", saveFlight);
   moveFocusWhenChosen("p1", "p2", DATA.names);
   moveFocusWhenChosen("p2", "payee", [...DATA.names, "SOLO"]);
@@ -850,6 +852,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (editButton) await editMasterValue(currentAdminList, editButton.dataset.masterEdit);
     if (deleteButton) await deleteMasterValue(currentAdminList, deleteButton.dataset.masterDelete);
   });
+  document.body.addEventListener("click", event => {
+    const launchButton = event.target.closest("#winchFlightBtn, #aerotowFlightBtn");
+    if (!launchButton) return;
+    event.preventDefault();
+    openEntry(launchButton.id === "winchFlightBtn" ? "winch" : "aerotow");
+  });
+
   document.body.addEventListener("click", async event => {
     const button = event.target.closest("[data-add-master]");
     if (!button) return;
@@ -897,7 +906,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=130").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=131").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }

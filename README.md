@@ -322,3 +322,11 @@ fallback-only except for a pending local edit. Existing flight, landing,
 administration and export functions are unchanged.
 
 Run `SUPABASE_1.3.0_PATCH.sql` once before publishing.
+
+
+## Version 1.3.1 correction
+
+- Restored the WINCH FLIGHT button click handler.
+- Restored the AEROTOW FLIGHT button click handler.
+- Added a delegated click fallback for browser reliability.
+- No Supabase SQL change is required.
