@@ -330,3 +330,14 @@ Run `SUPABASE_1.3.0_PATCH.sql` once before publishing.
 - Restored the AEROTOW FLIGHT button click handler.
 - Added a delegated click fallback for browser reliability.
 - No Supabase SQL change is required.
+
+
+## Version 1.4.0 operational improvements
+
+- Added Ready to Launch queued flights.
+- Added TAKE OFF NOW from the queue.
+- Added authoritative selected-day flight reconciliation.
+- Added cloud/device flight-count and airborne verification.
+- Added manual SYNC NOW.
+- Status shows VERIFIED only after a full consistency check.
+- Master lists refresh during every cloud reconciliation.

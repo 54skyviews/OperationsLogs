@@ -5,6 +5,7 @@ const DB_VERSION = 3;
 let db;
 let currentType = "winch";
 let editingFlightId = null;
+let queueSaveRequested = false;
 let currentAdminList = "names";
 let lastLoadedRunway = "";
 const flyingDayState = {
@@ -305,13 +306,16 @@ function openEntry(type) {
   $("p2").value = "";
   $("formMessage").textContent = "";
   $("saveFlightBtn").textContent = "SAVE AS AIRBORNE";
+  $("queueFlightBtn").hidden = false;
   document.querySelectorAll(".warning-text").forEach(x => x.textContent = "");
   showView("entryView");
 }
 async function saveFlight(e) {
   e.preventDefault();
   const takeoff = $("takeoff").value, landing = $("landing").value;
-  if (!isValidHHMM(takeoff)) {
+  const savingToQueue = queueSaveRequested && !editingFlightId;
+  queueSaveRequested = false;
+  if (!savingToQueue && !isValidHHMM(takeoff)) {
     $("formMessage").textContent = "ENTER A VALID FOUR-DIGIT TAKE-OFF TIME.";
     return;
   }
@@ -350,7 +354,7 @@ async function saveFlight(e) {
   if (sameGliderAirborne && !confirm(`${upper($("glider").value)} IS ALREADY SHOWN AS AIRBORNE. SAVE ANOTHER OPEN FLIGHT?`)) return;
 
   const now = new Date().toISOString();
-  const status = landing ? "completed" : "airborne";
+  const status = savingToQueue ? "queued" : (landing ? "completed" : "airborne");
   const duration = landing ? calcDuration(takeoff, landing) : "";
 
   let flight;
@@ -383,7 +387,7 @@ async function saveFlight(e) {
     takeoff,
     landing,
     duration,
-    takeoffAt: hhmmToDate(date, takeoff),
+    takeoffAt: takeoff ? hhmmToDate(date, takeoff) : null,
     landedAt: landing ? hhmmToDate(date, landing) : null,
     remarks: upper($("remarks").value),
     aeros: $("aeros").value.trim(),
@@ -429,6 +433,7 @@ async function editFlight(id) {
   $("officeUse").value = flight.officeUse || "";
   $("formMessage").textContent = "";
   $("saveFlightBtn").textContent = flight.status === "airborne" ? "SAVE AIRBORNE CHANGES" : "SAVE FLIGHT CHANGES";
+  $("queueFlightBtn").hidden = true;
   document.querySelectorAll(".warning-text").forEach(x => x.textContent = "");
   validateListed("glider", DATA.gliders);
   validateListed("p1", DATA.names);
@@ -458,11 +463,24 @@ async function updateDashboard() {
   if (!db) return;
   const flights = await getFlightsByDate($("flyingDate").value);
   const completed = flights.filter(f => (f.status || "completed") === "completed");
+  const queued = flights.filter(f => f.status === "queued").sort((a,b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
   const airborne = flights.filter(f => f.status === "airborne").sort((a, b) => operationalTimeValue(b) - operationalTimeValue(a));
   $("winchCount").textContent = flights.filter(f => f.type === "winch").length;
   $("aerotowCount").textContent = flights.filter(f => f.type === "aerotow").length;
   $("minutesCount").textContent = completed.reduce((a,f) => a + (+f.duration || 0), 0);
   $("warningCount").textContent = flights.reduce((a,f) => a + (f.warnings?.length || 0), 0);
+  $("queuedCountBadge").textContent = queued.length;
+  $("queuedList").innerHTML = queued.length ? queued.map(f => `
+    <article class="queued-card">
+      <h3>${f.glider} · ${f.type.toUpperCase()}</h3>
+      <p><strong>P1:</strong> ${f.p1} &nbsp; <strong>P2:</strong> ${f.p2 || "SOLO"}</p>
+      ${f.type === "aerotow" ? `<p><strong>TUG:</strong> ${f.tugReg || "—"} · ${f.towHeight || "—"} FT</p>` : ""}
+      <div class="airborne-actions">
+        <button type="button" class="takeoff-queued-btn" data-queue-takeoff="${f.id}">TAKE OFF NOW</button>
+        <button type="button" class="edit-btn" data-queue-edit="${f.id}">EDIT</button>
+        <button type="button" class="delete-btn" data-queue-delete="${f.id}">DELETE</button>
+      </div>
+    </article>`).join("") : '<p class="muted">No flights queued.</p>';
   $("airborneCountBadge").textContent = airborne.length;
   $("airborneList").innerHTML = airborne.length ? airborne.map(f => `
     <article class="airborne-card" data-airborne-id="${f.id}">
@@ -476,6 +494,22 @@ async function updateDashboard() {
       </div>
     </article>`).join("") : '<p class="muted">No aircraft currently airborne.</p>';
 }
+async function takeOffQueuedFlight(id) {
+  const flight = await get("flights", id);
+  if (!flight || flight.status !== "queued") return;
+  const takeoff = timeHHMM();
+  flight.takeoff = takeoff;
+  flight.takeoffAt = hhmmToDate(flight.date, takeoff);
+  flight.status = "airborne";
+  flight.modifiedAt = new Date().toISOString();
+  flight.syncStatus = "pending";
+  flight.pendingModifiedAt = flight.modifiedAt;
+  await put("flights", flight);
+  await queueSyncRecord("flight", id, "upsert");
+  await updateDashboard();
+  if (navigator.onLine && currentDevice?.approved) setTimeout(() => reconcileCloudState("queued takeoff"), 250);
+}
+
 async function landFlight(id, landingTime) {
   const flight = await get("flights", id);
   if (!flight || flight.status !== "airborne") return;
@@ -509,9 +543,10 @@ async function reviewFlights() {
   const flights = await getFlightsByDate(date);
 
   flights.sort((a, b) => {
-    const aAirborne = a.status === "airborne" ? 1 : 0;
-    const bAirborne = b.status === "airborne" ? 1 : 0;
-    if (aAirborne !== bAirborne) return bAirborne - aAirborne;
+    const rank = status => status === "queued" ? 2 : (status === "airborne" ? 1 : 0);
+    const rankDiff = rank(b.status) - rank(a.status);
+    if (rankDiff) return rankDiff;
+    if (a.status === "queued" && b.status === "queued") return String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
     return reviewSortTime(b) - reviewSortTime(a);
   });
 
@@ -521,7 +556,7 @@ async function reviewFlights() {
       <h3>${i+1}. ${f.type.toUpperCase()} — ${f.glider}</h3>
       <p><strong>P1:</strong> ${f.p1} &nbsp; <strong>P2:</strong> ${f.p2 || "SOLO"}</p>
       ${f.type === "aerotow" ? `<p><strong>TUG:</strong> ${f.tugReg} — ${f.tugPilot}</p>` : ""}
-      <p><strong>${f.takeoff}${f.landing ? "–"+f.landing : " · AIRBORNE"}</strong>${f.status === "airborne" ? ` · ${elapsedMinutes(f)} MINUTES SO FAR` : ` · ${f.duration} MINUTES`}</p>
+      <p><strong>${f.status === "queued" ? "READY TO LAUNCH" : (f.takeoff + (f.landing ? "–"+f.landing : " · AIRBORNE"))}</strong>${f.status === "airborne" ? ` · ${elapsedMinutes(f)} MINUTES SO FAR` : (f.status === "queued" ? "" : ` · ${f.duration} MINUTES`)}</p>
       ${f.remarks ? `<p>${f.remarks}</p>` : ""}
       ${f.warnings?.length ? `<span class="badge">${f.warnings.join(" · ")}</span>` : ""}
       <div class="review-actions">
@@ -807,6 +842,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   $("winchFlightBtn").addEventListener("click", () => openEntry("winch"));
   $("aerotowFlightBtn").addEventListener("click", () => openEntry("aerotow"));
+  $("queueFlightBtn").addEventListener("click", () => {
+    queueSaveRequested = true;
+    $("flightForm").requestSubmit();
+  });
   $("flightForm").addEventListener("submit", saveFlight);
   moveFocusWhenChosen("p1", "p2", DATA.names);
   moveFocusWhenChosen("p2", "payee", [...DATA.names, "SOLO"]);
@@ -890,6 +929,19 @@ document.addEventListener("DOMContentLoaded", async () => {
       await updateDashboard();
     }
   });
+  $("queuedList").addEventListener("click", async e => {
+    const takeoffId = e.target.dataset.queueTakeoff;
+    const editId = e.target.dataset.queueEdit;
+    const deleteId = e.target.dataset.queueDelete;
+    if (takeoffId) await takeOffQueuedFlight(takeoffId);
+    if (editId) await editFlight(editId);
+    if (deleteId && confirm("DELETE THIS QUEUED FLIGHT?")) {
+      await removeFlight(deleteId);
+      await queueSyncRecord("flight", deleteId, "delete");
+      await updateDashboard();
+    }
+  });
+  $("syncNowBtn").addEventListener("click", () => reconcileCloudState("manual"));
   $("airborneList").addEventListener("click", async e => {
     const nowId = e.target.dataset.landNow;
     const manualId = e.target.dataset.landManual;
@@ -906,7 +958,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=131").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=140").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }

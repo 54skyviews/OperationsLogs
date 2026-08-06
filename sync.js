@@ -11,6 +11,7 @@ let reconciliationTimer = null;
 let lastCloudPullAt = 0;
 let approvalWatcher = null;
 let lastSyncError = "";
+let lastVerification = null;
 
 const CLOUD = window.OPERATIONSLOGS_SUPABASE;
 
@@ -513,6 +514,67 @@ async function applyRemoteFlight(row) {
   await put("flights", localFlightFromRemote(row));
 }
 
+async function reconcileFlightsForDate(date) {
+  const { data, error } = await operatorSupabase
+    .from("flights")
+    .select("*")
+    .eq("date", date);
+  if (error) throw error;
+
+  const cloudRows = data || [];
+  const cloudIds = new Set(cloudRows.map(row => row.id));
+  for (const row of cloudRows) await applyRemoteFlight(row);
+
+  const localRows = await getFlightsByDate(date);
+  for (const local of localRows) {
+    const pending = await get("syncQueue", `flight:${local.id}`);
+    if (!cloudIds.has(local.id) && !pending && local.syncStatus !== "pending") {
+      await removeFlight(local.id);
+    }
+  }
+
+  const repairedLocal = await getFlightsByDate(date);
+  const cloudById = new Map(cloudRows.map(row => [row.id, row]));
+  let mismatches = 0;
+  for (const local of repairedLocal) {
+    const remote = cloudById.get(local.id);
+    const pending = await get("syncQueue", `flight:${local.id}`);
+    if (pending) continue;
+    if (!remote) { mismatches++; continue; }
+    if ((local.status || "") !== (remote.status || "") ||
+        (local.takeoff || "") !== (remote.takeoff || "") ||
+        (local.landing || "") !== (remote.landing || "")) mismatches++;
+  }
+
+  lastVerification = {
+    date,
+    cloudCount: cloudRows.length,
+    localCount: repairedLocal.length,
+    cloudAirborne: cloudRows.filter(r => r.status === "airborne").length,
+    localAirborne: repairedLocal.filter(r => r.status === "airborne").length,
+    mismatches,
+    checkedAt: new Date()
+  };
+  updateSyncVerificationDisplay();
+  return lastVerification;
+}
+
+function updateSyncVerificationDisplay() {
+  const el = document.getElementById("syncVerificationText");
+  if (!el) return;
+  if (!lastVerification) {
+    el.textContent = "Waiting for full check…";
+    return;
+  }
+  const v = lastVerification;
+  const ok = v.cloudCount === v.localCount && v.cloudAirborne === v.localAirborne && v.mismatches === 0;
+  const time = v.checkedAt.toLocaleTimeString("en-GB", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+  el.innerHTML = `<strong>${ok ? "ONLINE · VERIFIED" : "DATA MISMATCH"}</strong><br>` +
+    `Cloud ${v.cloudCount} flights · Device ${v.localCount} flights · ` +
+    `Airborne ${v.localAirborne}<br>Last full check ${time}`;
+  el.className = `sync-verification-text ${ok ? "verified" : "mismatch"}`;
+}
+
 async function pullFlights() {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 31);
@@ -636,6 +698,8 @@ async function pullMasterLists(client = operatorSupabase) {
 async function pullCloudData() {
   if (!currentDevice?.approved || !navigator.onLine) return;
   await Promise.all([pullFlights(), pullFlyingDays(), pullMasterLists()]);
+  const selectedDate = document.getElementById("flyingDate")?.value;
+  if (selectedDate) await reconcileFlightsForDate(selectedDate);
   lastCloudPullAt = Date.now();
   
   await updateDashboard();
@@ -647,7 +711,11 @@ async function reconcileCloudState(reason = "periodic") {
   try {
     await processSyncQueue();
     await pullCloudData();
-    setSyncStatus("ONLINE · SYNCED", "online");
+    const verified = lastVerification &&
+      lastVerification.cloudCount === lastVerification.localCount &&
+      lastVerification.cloudAirborne === lastVerification.localAirborne &&
+      lastVerification.mismatches === 0;
+    setSyncStatus(verified ? "ONLINE · VERIFIED" : "ONLINE · CHECKING", verified ? "online" : "pending");
   } catch (error) {
     console.error(`Cloud reconciliation failed (${reason}):`, error);
     setSyncStatus("SYNC PROBLEM · RETRYING", "error");
