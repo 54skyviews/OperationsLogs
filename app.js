@@ -6,6 +6,7 @@ let db;
 let currentType = "winch";
 let editingFlightId = null;
 let queueSaveRequested = false;
+let queuedTakeoffBusy = false;
 let currentAdminList = "names";
 let lastLoadedRunway = "";
 const flyingDayState = {
@@ -502,33 +503,98 @@ async function updateDashboard() {
       </div>
     </article>`).join("") : '<p class="muted">No aircraft currently airborne.</p>';
 }
-async function takeOffQueuedFlight(id) {
-  const flight = await get("flights", id);
-  if (!flight) {
-    alert("QUEUED FLIGHT COULD NOT BE FOUND. PRESS SYNC NOW AND TRY AGAIN.");
-    return;
-  }
-  if (flight.status !== "queued") {
-    alert("THIS FLIGHT IS NO LONGER IN THE READY QUEUE.");
-    await updateDashboard();
-    return;
-  }
-  const takeoff = timeHHMM();
-  flight.takeoff = takeoff;
-  flight.takeoffAt = hhmmToDate(flight.date, takeoff);
-  flight.status = "airborne";
-  flight.modifiedAt = new Date().toISOString();
-  flight.syncStatus = "pending";
-  flight.pendingModifiedAt = flight.modifiedAt;
-  await put("flights", flight);
-  await queueSyncRecord("flight", id, "upsert");
-  await updateDashboard();
+async function takeOffQueuedFlight(id, button = null) {
+  if (queuedTakeoffBusy) return false;
+  queuedTakeoffBusy = true;
 
-  if (navigator.onLine && currentDevice?.approved) {
-    // Upload first, then verify against the cloud. Do not reconcile before the upload completes.
-    await processSyncQueue();
-    await reconcileCloudState("queued takeoff");
+  if (!id) {
+    queuedTakeoffBusy = false;
+    alert("READY QUEUE ERROR: FLIGHT ID IS MISSING.");
+    return false;
+  }
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = "TAKING OFF…";
+  }
+
+  try {
+    const flight = await get("flights", id);
+
+    if (!flight) {
+      alert("QUEUED FLIGHT COULD NOT BE FOUND. PRESS SYNC NOW AND TRY AGAIN.");
+      await updateDashboard();
+      return false;
+    }
+
+    if (flight.status !== "queued") {
+      alert("THIS FLIGHT IS NO LONGER IN THE READY QUEUE.");
+      await updateDashboard();
+      return false;
+    }
+
+    const takeoff = timeHHMM();
+    const now = new Date().toISOString();
+
+    // Ready Queue is a local draft until this moment.
+    flight.takeoff = takeoff;
+    flight.takeoffAt = hhmmToDate(flight.date, takeoff);
+    flight.landing = "";
+    flight.landedAt = null;
+    flight.duration = "";
+    flight.status = "airborne";
+    flight.modifiedAt = now;
+    flight.syncStatus = "pending";
+    flight.pendingModifiedAt = now;
+
+    // Persist first so the operator sees Airborne immediately.
+    await put("flights", flight);
     await updateDashboard();
+
+    await queueSyncRecord("flight", id, "upsert");
+
+    if (!navigator.onLine || !currentDevice?.approved) {
+      await updatePendingCount();
+      return true;
+    }
+
+    // Upload this exact flight before full reconciliation.
+    try {
+      await syncFlightQueueItem({
+        id: `flight:${id}`,
+        recordType: "flight",
+        recordId: id,
+        action: "upsert"
+      });
+      await removeQueueItem(`flight:${id}`);
+      await updateDashboard();
+
+      // Existing v1.4.6 reconciliation remains unchanged.
+      await reconcileCloudState("queued takeoff verified");
+      await updateDashboard();
+      return true;
+    } catch (error) {
+      console.error("TAKE OFF NOW upload failed:", error);
+      const latest = await get("flights", id);
+      if (latest) {
+        latest.syncStatus = "pending";
+        latest.pendingModifiedAt = latest.pendingModifiedAt || latest.modifiedAt || now;
+        await put("flights", latest);
+      }
+      await updatePendingCount();
+      alert("TAKE-OFF WAS SAVED ON THIS DEVICE BUT IS WAITING TO SYNC.");
+      return true;
+    }
+  } catch (error) {
+    console.error("TAKE OFF NOW failed:", error);
+    alert(`TAKE OFF NOW ERROR: ${String(error?.message || error).toUpperCase().slice(0, 100)}`);
+    return false;
+  } finally {
+    queuedTakeoffBusy = false;
+    if (button && document.body.contains(button)) {
+      button.disabled = false;
+      button.textContent = "TAKE OFF NOW";
+    }
   }
 }
 
@@ -864,6 +930,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     await saveFlyingDayField("windSpeed", false);
   });
 
+  document.body.addEventListener("click", event => {
+    const timeButton = event.target.closest("[data-time-target]");
+    if (!timeButton) return;
+
+    const targetId = timeButton.dataset.timeTarget;
+    const target = $(targetId);
+    if (!target) return;
+
+    event.preventDefault();
+    target.value = timeHHMM();
+
+    if (targetId === "landing") {
+      $("duration").value = calcDuration($("takeoff").value, $("landing").value);
+    }
+  });
+
   $("winchFlightBtn").addEventListener("click", () => openEntry("winch"));
   $("aerotowFlightBtn").addEventListener("click", () => openEntry("aerotow"));
   $("p2").addEventListener("change", () => {
@@ -968,16 +1050,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     if (takeoffButton) {
       e.preventDefault();
-      takeoffButton.disabled = true;
-      takeoffButton.textContent = "TAKING OFF…";
-      try {
-        await takeOffQueuedFlight(takeoffButton.dataset.queueTakeoff);
-      } finally {
-        if (document.body.contains(takeoffButton)) {
-          takeoffButton.disabled = false;
-          takeoffButton.textContent = "TAKE OFF NOW";
-        }
-      }
+      e.stopPropagation();
+      await takeOffQueuedFlight(takeoffButton.dataset.queueTakeoff, takeoffButton);
       return;
     }
 
@@ -997,12 +1071,22 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   $("syncNowBtn").addEventListener("click", () => reconcileCloudState("manual"));
   $("airborneList").addEventListener("click", async e => {
-    const nowId = e.target.dataset.landNow;
-    const manualId = e.target.dataset.landManual;
-    if (nowId) await landFlight(nowId, timeHHMM());
-    if (manualId) {
+    const nowButton = e.target.closest("[data-land-now]");
+    const manualButton = e.target.closest("[data-land-manual]");
+
+    if (nowButton) {
+      e.preventDefault();
+      e.stopPropagation();
+      await landFlight(nowButton.dataset.landNow, timeHHMM());
+      return;
+    }
+
+    if (manualButton) {
+      e.preventDefault();
       const value = prompt("ENTER LANDING TIME AS FOUR DIGITS (HHMM):", timeHHMM());
-      if (value !== null) await landFlight(manualId, value.replace(/\D/g,"").slice(0,4));
+      if (value !== null) {
+        await landFlight(manualButton.dataset.landManual, value.replace(/\D/g,"").slice(0,4));
+      }
     }
   });
   setInterval(() => {
@@ -1012,7 +1096,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=146").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=147").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }

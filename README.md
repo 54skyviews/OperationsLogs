@@ -429,3 +429,28 @@ TAKE OFF NOW is intentionally unchanged in this release so the cloud fix can be
 tested independently.
 
 No Supabase SQL change is required.
+
+
+## Version 1.4.7 button reliability
+
+This release deliberately leaves the stable v1.4.6 synchronisation/reconciliation
+logic unchanged.
+
+TAKE OFF NOW:
+- Ready Queue TAKE OFF NOW persists the flight locally as AIRBORNE first.
+- It then uploads that exact flight before running full reconciliation.
+- The button shows TAKING OFF… while processing.
+- If cloud upload fails, the airborne flight remains safely stored locally and
+  is left waiting to sync.
+
+Button audit:
+- Found that the flight-entry TAKE OFF NOW / LAND NOW buttons had no click
+  handler at all. Added the missing handler.
+- LAND NOW fills the landing time and recalculates duration.
+- Found the Airborne LAND NOW / ENTER TIME handler used `event.target.dataset`
+  directly. Replaced it with robust delegated `closest(...)` button detection.
+- WINCH, AEROTOW, Review, Export, Administration, Sync Now, Back, Save, dialog,
+  administrator and review Edit/Delete buttons all have valid handlers.
+- SAVE TO READY QUEUE no longer uses requestSubmit and remains unchanged.
+
+No Supabase SQL change is required.
