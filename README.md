@@ -384,3 +384,14 @@ READY TO LAUNCH is now deliberately a local draft state.
 - Landing now uploads immediately before the full verification check.
 - A flight Realtime event schedules an immediate full verification.
 - No Supabase SQL change is required.
+
+
+## Version 1.4.5 no-cache cloud verification
+
+- The selected-day authoritative flight read now bypasses browser caches.
+- It uses a direct authenticated Supabase REST request with `cache: no-store`,
+  no-cache headers, and a unique timestamp query parameter.
+- DATA MISMATCH now shows short ID suffixes for records missing from either side.
+- Realtime connection status no longer overwrites a full VERIFIED/CHECKING result.
+- Startup finishes with an authoritative reconciliation.
+- No Supabase SQL change is required.

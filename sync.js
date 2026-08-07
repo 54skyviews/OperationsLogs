@@ -536,14 +536,39 @@ async function applyRemoteFlight(row) {
   await put("flights", localFlightFromRemote(row));
 }
 
-async function reconcileFlightsForDate(date) {
-  const { data, error } = await operatorSupabase
-    .from("flights")
-    .select("*")
-    .eq("date", date);
-  if (error) throw error;
+async function fetchFlightsForDateNoCache(date) {
+  const { data: sessionData, error: sessionError } = await operatorSupabase.auth.getSession();
+  if (sessionError) throw sessionError;
+  const accessToken = sessionData?.session?.access_token;
+  if (!accessToken) throw new Error("NO ACTIVE CLOUD SESSION");
 
-  const cloudRows = data || [];
+  const url =
+    `${CLOUD.url}/rest/v1/flights` +
+    `?select=*&date=eq.${encodeURIComponent(date)}` +
+    `&order=modified_at.asc&_=${Date.now()}`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+    headers: {
+      apikey: CLOUD.publishableKey,
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+      "Cache-Control": "no-cache, no-store, max-age=0",
+      Pragma: "no-cache"
+    }
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`FLIGHT READ HTTP ${response.status}: ${body.slice(0, 120)}`);
+  }
+
+  return await response.json();
+}
+
+async function reconcileFlightsForDate(date) {
+  const cloudRows = await fetchFlightsForDateNoCache(date);
   const cloudIds = new Set(cloudRows.map(row => row.id));
   for (const row of cloudRows) await applyRemoteFlight(row);
 
@@ -580,6 +605,12 @@ async function reconcileFlightsForDate(date) {
     cloudAirborne: cloudRows.filter(r => r.status === "airborne").length,
     localAirborne: operationalLocal.filter(r => r.status === "airborne").length,
     mismatches,
+    missingCloudIds: operationalLocal
+      .filter(local => !cloudById.has(local.id))
+      .map(local => String(local.id).slice(-8)),
+    missingDeviceIds: cloudRows
+      .filter(remote => !localIds.has(remote.id))
+      .map(remote => String(remote.id).slice(-8)),
     checkedAt: new Date()
   };
   updateSyncVerificationDisplay();
@@ -596,9 +627,15 @@ function updateSyncVerificationDisplay() {
   const v = lastVerification;
   const ok = v.cloudCount === v.localCount && v.cloudAirborne === v.localAirborne && v.mismatches === 0;
   const time = v.checkedAt.toLocaleTimeString("en-GB", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+  let detail = "";
+  if (!ok) {
+    if (v.missingCloudIds?.length) detail += `<br>Missing from cloud read: ${v.missingCloudIds.join(", ")}`;
+    if (v.missingDeviceIds?.length) detail += `<br>Missing from device: ${v.missingDeviceIds.join(", ")}`;
+  }
   el.innerHTML = `<strong>${ok ? "ONLINE · VERIFIED" : "DATA MISMATCH"}</strong><br>` +
     `Cloud ${v.cloudCount} flights · Device ${v.localCount} flights · ` +
-    `Airborne ${v.localAirborne} · Ready drafts ${v.queuedDrafts || 0}<br>Last full check ${time}`;
+    `Airborne ${v.localAirborne} · Ready drafts ${v.queuedDrafts || 0}` +
+    detail + `<br>Last full check ${time}`;
   el.className = `sync-verification-text ${ok ? "verified" : "mismatch"}`;
 }
 
@@ -818,7 +855,7 @@ function subscribeRealtime() {
     })
     .subscribe(status => {
       if (status === "SUBSCRIBED") {
-        setSyncStatus("ONLINE · SYNCED", "online");
+        if (!lastVerification) setSyncStatus("ONLINE · CHECKING", "pending");
       } else if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) {
         setSyncStatus("REALTIME INTERRUPTED · RECONNECTING", "pending");
         setTimeout(async () => {
@@ -867,7 +904,7 @@ async function initializeCloudSync() {
     await processSyncQueue();
     subscribeRealtime();
     startCloudReconciliation();
-    setSyncStatus("ONLINE · SYNCED", "online");
+    await reconcileCloudState("startup verified");
   } catch (error) {
     console.error("Cloud startup failed:", error);
     setSyncStatus(navigator.onLine ? "CLOUD SETUP REQUIRED" : "OFFLINE · LOCAL SAVE", "error");
