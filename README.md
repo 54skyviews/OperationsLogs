@@ -454,3 +454,24 @@ Button audit:
 - SAVE TO READY QUEUE no longer uses requestSubmit and remains unchanged.
 
 No Supabase SQL change is required.
+
+
+## Version 1.4.8 service-worker data-cache correction
+
+Root cause of device-specific cloud counts:
+- the service worker previously used `caches.match(request)` for every non-navigation GET;
+- this included Supabase REST requests;
+- a device could therefore keep replaying the first cloud-flight response it had
+  cached for a date even while Supabase contained newer flights;
+- browser `fetch(..., { cache: "no-store" })` does not bypass a response deliberately
+  returned by a service worker's Cache API.
+
+Correction:
+- every request to `*.supabase.co` is now network-only;
+- Supabase responses are never put in the service-worker cache;
+- navigations remain network-first with an offline fallback;
+- application shell assets remain available offline;
+- unrelated cross-origin dynamic requests are also network-only;
+- the v1.4.7 button logic and v1.4.6 reconciliation logic are unchanged.
+
+No Supabase SQL change is required.

@@ -1096,7 +1096,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=147").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=148").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }
