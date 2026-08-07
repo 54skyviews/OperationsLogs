@@ -395,3 +395,15 @@ READY TO LAUNCH is now deliberately a local draft state.
 - Realtime connection status no longer overwrites a full VERIFIED/CHECKING result.
 - Startup finishes with an authoritative reconciliation.
 - No Supabase SQL change is required.
+
+
+## Version 1.4.5a Diagnostic
+
+Temporary diagnostic build only.
+
+- TAKE OFF NOW behaviour is intentionally unchanged from v1.4.5.
+- The Sync Verification panel now shows the exact cloud REST stage.
+- HTTP status/status text and up to 500 characters of the response body are shown.
+- Network/fetch, authentication, response-read and JSON-parse errors are identified separately.
+- The top status banner includes a shortened exact error message.
+- No Supabase SQL change is required.

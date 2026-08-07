@@ -536,35 +536,170 @@ async function applyRemoteFlight(row) {
   await put("flights", localFlightFromRemote(row));
 }
 
+let cloudDiagnostic = {
+  stage: "",
+  method: "",
+  url: "",
+  status: "",
+  statusText: "",
+  responseText: "",
+  errorName: "",
+  errorMessage: "",
+  checkedAt: null
+};
+
+function redactDiagnosticUrl(url) {
+  return String(url || "").replace(/([?&]_)=\d+/g, "$1=[timestamp]");
+}
+
+function updateCloudDiagnosticBox() {
+  const box = document.getElementById("cloudDiagnosticBox");
+  const text = document.getElementById("cloudDiagnosticText");
+  if (!box || !text) return;
+
+  const d = cloudDiagnostic;
+  if (!d.stage && !d.errorMessage && !d.status) {
+    box.hidden = true;
+    return;
+  }
+
+  const lines = [];
+  if (d.stage) lines.push(`Stage: ${d.stage}`);
+  if (d.method) lines.push(`Method: ${d.method}`);
+  if (d.url) lines.push(`URL: ${redactDiagnosticUrl(d.url)}`);
+  if (d.status !== "") lines.push(`HTTP: ${d.status}${d.statusText ? " " + d.statusText : ""}`);
+  if (d.errorName) lines.push(`Error type: ${d.errorName}`);
+  if (d.errorMessage) lines.push(`Error: ${d.errorMessage}`);
+  if (d.responseText) lines.push(`Response: ${d.responseText.slice(0, 500)}`);
+  if (d.checkedAt) lines.push(`Time: ${d.checkedAt.toLocaleTimeString("en-GB")}`);
+
+  text.textContent = lines.join("\n");
+  box.hidden = false;
+}
+
+function setCloudDiagnostic(values) {
+  cloudDiagnostic = Object.assign({}, cloudDiagnostic, values, { checkedAt: new Date() });
+  updateCloudDiagnosticBox();
+}
+
 async function fetchFlightsForDateNoCache(date) {
   const { data: sessionData, error: sessionError } = await operatorSupabase.auth.getSession();
-  if (sessionError) throw sessionError;
+  if (sessionError) {
+    setCloudDiagnostic({
+      stage: "GET SESSION",
+      errorName: sessionError.name || "SupabaseAuthError",
+      errorMessage: sessionError.message || String(sessionError),
+      status: "",
+      statusText: "",
+      responseText: ""
+    });
+    throw sessionError;
+  }
+
   const accessToken = sessionData?.session?.access_token;
-  if (!accessToken) throw new Error("NO ACTIVE CLOUD SESSION");
+  if (!accessToken) {
+    const error = new Error("NO ACTIVE CLOUD SESSION");
+    setCloudDiagnostic({
+      stage: "GET SESSION",
+      errorName: error.name,
+      errorMessage: error.message,
+      status: "",
+      statusText: "",
+      responseText: ""
+    });
+    throw error;
+  }
 
   const url =
     `${CLOUD.url}/rest/v1/flights` +
     `?select=*&date=eq.${encodeURIComponent(date)}` +
     `&order=modified_at.asc&_=${Date.now()}`;
 
-  const response = await fetch(url, {
+  setCloudDiagnostic({
+    stage: "FLIGHT REST REQUEST",
     method: "GET",
-    cache: "no-store",
-    headers: {
-      apikey: CLOUD.publishableKey,
-      Authorization: `Bearer ${accessToken}`,
-      Accept: "application/json",
-      "Cache-Control": "no-cache, no-store, max-age=0",
-      Pragma: "no-cache"
-    }
+    url,
+    status: "",
+    statusText: "",
+    responseText: "",
+    errorName: "",
+    errorMessage: ""
+  });
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        apikey: CLOUD.publishableKey,
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+        "Cache-Control": "no-cache, no-store, max-age=0",
+        Pragma: "no-cache"
+      }
+    });
+  } catch (error) {
+    setCloudDiagnostic({
+      stage: "FLIGHT REST FETCH FAILED",
+      method: "GET",
+      url,
+      status: "",
+      statusText: "",
+      responseText: "",
+      errorName: error?.name || "Error",
+      errorMessage: error?.message || String(error)
+    });
+    throw error;
+  }
+
+  let body = "";
+  try {
+    body = await response.text();
+  } catch (error) {
+    setCloudDiagnostic({
+      stage: "READ REST RESPONSE",
+      method: "GET",
+      url,
+      status: response.status,
+      statusText: response.statusText,
+      responseText: "",
+      errorName: error?.name || "Error",
+      errorMessage: error?.message || String(error)
+    });
+    throw error;
+  }
+
+  setCloudDiagnostic({
+    stage: response.ok ? "FLIGHT REST SUCCESS" : "FLIGHT REST HTTP ERROR",
+    method: "GET",
+    url,
+    status: response.status,
+    statusText: response.statusText,
+    responseText: body,
+    errorName: "",
+    errorMessage: response.ok ? "" : `HTTP ${response.status}`
   });
 
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`FLIGHT READ HTTP ${response.status}: ${body.slice(0, 120)}`);
+    throw new Error(`FLIGHT READ HTTP ${response.status}: ${body.slice(0, 180)}`);
   }
 
-  return await response.json();
+  try {
+    return body ? JSON.parse(body) : [];
+  } catch (error) {
+    setCloudDiagnostic({
+      stage: "PARSE REST RESPONSE",
+      method: "GET",
+      url,
+      status: response.status,
+      statusText: response.statusText,
+      responseText: body,
+      errorName: error?.name || "SyntaxError",
+      errorMessage: error?.message || String(error)
+    });
+    throw error;
+  }
 }
 
 async function reconcileFlightsForDate(date) {
@@ -782,7 +917,18 @@ async function reconcileCloudState(reason = "periodic") {
     setSyncStatus(verified ? "ONLINE · VERIFIED" : "ONLINE · CHECKING", verified ? "online" : "pending");
   } catch (error) {
     console.error(`Cloud reconciliation failed (${reason}):`, error);
-    setSyncStatus("SYNC PROBLEM · RETRYING", "error");
+    if (!cloudDiagnostic.errorMessage) {
+      setCloudDiagnostic({
+        stage: `RECONCILIATION FAILED (${reason})`,
+        errorName: error?.name || "Error",
+        errorMessage: error?.message || String(error)
+      });
+    }
+    const shortMessage = String(error?.message || "UNKNOWN ERROR")
+      .toUpperCase()
+      .replace(/\s+/g, " ")
+      .slice(0, 55);
+    setSyncStatus(`SYNC PROBLEM · ${shortMessage}`, "error");
   }
 }
 

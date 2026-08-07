@@ -12,14 +12,14 @@
   <link rel="apple-touch-icon" href="icon.svg">
   <meta name="description" content="Offline-first gliding club operations log">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=145">
+  <link rel="stylesheet" href="styles.css?v=145a">
   <title>OperationsLogs</title>
 </head>
 <body>
   <header class="app-header">
     <div>
       <h1>OperationsLogs</h1>
-      <p>Gliding operations log <span id="appVersion">v1.4.5</span></p>
+      <p>Gliding operations log <span id="appVersion">v1.4.5a Diagnostic</span></p>
     </div>
     <div id="statusBadge" class="status offline">OFFLINE READY</div>
   </header>
@@ -51,6 +51,10 @@
           <button type="button" id="syncNowBtn" class="secondary compact-button">SYNC NOW</button>
         </div>
         <div id="syncVerificationText" class="sync-verification-text">Waiting for full check…</div>
+        <div id="cloudDiagnosticBox" class="cloud-diagnostic-box" hidden>
+          <strong>CLOUD DIAGNOSTIC</strong>
+          <pre id="cloudDiagnosticText"></pre>
+        </div>
       </div>
 
       <div class="panel queued-panel">
@@ -221,9 +225,9 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="supabase-config.js?v=145"></script>
-  <script src="sync.js?v=145"></script>
-  <script src="data.js?v=145"></script>
-  <script src="app.js?v=145"></script>
+  <script src="supabase-config.js?v=145a"></script>
+  <script src="sync.js?v=145a"></script>
+  <script src="data.js?v=145a"></script>
+  <script src="app.js?v=145a"></script>
 </body>
 </html>

@@ -995,7 +995,21 @@ document.addEventListener("DOMContentLoaded", async () => {
       await updateDashboard();
     }
   });
-  $("syncNowBtn").addEventListener("click", () => reconcileCloudState("manual"));
+  $("syncNowBtn").addEventListener("click", () => {
+    if (typeof setCloudDiagnostic === "function") {
+      setCloudDiagnostic({
+        stage: "MANUAL SYNC STARTED",
+        method: "",
+        url: "",
+        status: "",
+        statusText: "",
+        responseText: "",
+        errorName: "",
+        errorMessage: ""
+      });
+    }
+    reconcileCloudState("manual");
+  });
   $("airborneList").addEventListener("click", async e => {
     const nowId = e.target.dataset.landNow;
     const manualId = e.target.dataset.landManual;
@@ -1012,7 +1026,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=145").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=145a").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }
