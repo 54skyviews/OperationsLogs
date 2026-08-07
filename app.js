@@ -397,10 +397,17 @@ async function saveFlight(e) {
     modifiedAt: now
   });
 
-  flight.syncStatus = "pending";
-  flight.pendingModifiedAt = flight.modifiedAt;
-  await put("flights", flight);
-  await queueSyncRecord("flight", flight.id, "upsert");
+  if (status === "queued") {
+    // Ready-to-launch records are local drafts, not official cloud flights.
+    flight.syncStatus = "draft";
+    flight.pendingModifiedAt = null;
+    await put("flights", flight);
+  } else {
+    flight.syncStatus = "pending";
+    flight.pendingModifiedAt = flight.modifiedAt;
+    await put("flights", flight);
+    await queueSyncRecord("flight", flight.id, "upsert");
+  }
   editingFlightId = null;
   showView("homeView");
   await updateDashboard();
@@ -515,7 +522,13 @@ async function takeOffQueuedFlight(id) {
   await put("flights", flight);
   await queueSyncRecord("flight", id, "upsert");
   await updateDashboard();
-  if (navigator.onLine && currentDevice?.approved) setTimeout(() => reconcileCloudState("queued takeoff"), 250);
+
+  if (navigator.onLine && currentDevice?.approved) {
+    // Upload first, then verify against the cloud. Do not reconcile before the upload completes.
+    await processSyncQueue();
+    await reconcileCloudState("queued takeoff");
+    await updateDashboard();
+  }
 }
 
 async function landFlight(id, landingTime) {
@@ -968,7 +981,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       e.preventDefault();
       const deleteId = deleteButton.dataset.queueDelete;
       await removeFlight(deleteId);
-      await queueSyncRecord("flight", deleteId, "delete");
+      await remove("syncQueue", `flight:${deleteId}`);
       await updateDashboard();
     }
   });
@@ -989,7 +1002,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=141").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=142").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }

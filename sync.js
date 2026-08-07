@@ -482,6 +482,7 @@ async function processSyncQueue() {
 }
 async function applyRemoteFlight(row) {
   const local = await get("flights", row.id);
+  if (local?.status === "queued" && local?.syncStatus === "draft") return;
   const pendingQueueItem = await get("syncQueue", `flight:${row.id}`);
   const localPending = local?.syncStatus === "pending" || Boolean(pendingQueueItem);
 
@@ -527,6 +528,7 @@ async function reconcileFlightsForDate(date) {
 
   const localRows = await getFlightsByDate(date);
   for (const local of localRows) {
+    if (local.status === "queued") continue; // local draft: never remove during cloud reconciliation
     const pending = await get("syncQueue", `flight:${local.id}`);
     if (!cloudIds.has(local.id) && !pending && local.syncStatus !== "pending") {
       await removeFlight(local.id);
@@ -534,9 +536,10 @@ async function reconcileFlightsForDate(date) {
   }
 
   const repairedLocal = await getFlightsByDate(date);
+  const operationalLocal = repairedLocal.filter(local => local.status !== "queued");
   const cloudById = new Map(cloudRows.map(row => [row.id, row]));
   let mismatches = 0;
-  for (const local of repairedLocal) {
+  for (const local of operationalLocal) {
     const remote = cloudById.get(local.id);
     const pending = await get("syncQueue", `flight:${local.id}`);
     if (pending) continue;
@@ -549,9 +552,10 @@ async function reconcileFlightsForDate(date) {
   lastVerification = {
     date,
     cloudCount: cloudRows.length,
-    localCount: repairedLocal.length,
+    localCount: operationalLocal.length,
+    queuedDrafts: repairedLocal.filter(local => local.status === "queued").length,
     cloudAirborne: cloudRows.filter(r => r.status === "airborne").length,
-    localAirborne: repairedLocal.filter(r => r.status === "airborne").length,
+    localAirborne: operationalLocal.filter(r => r.status === "airborne").length,
     mismatches,
     checkedAt: new Date()
   };
@@ -571,7 +575,7 @@ function updateSyncVerificationDisplay() {
   const time = v.checkedAt.toLocaleTimeString("en-GB", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
   el.innerHTML = `<strong>${ok ? "ONLINE · VERIFIED" : "DATA MISMATCH"}</strong><br>` +
     `Cloud ${v.cloudCount} flights · Device ${v.localCount} flights · ` +
-    `Airborne ${v.localAirborne}<br>Last full check ${time}`;
+    `Airborne ${v.localAirborne} · Ready drafts ${v.queuedDrafts || 0}<br>Last full check ${time}`;
   el.className = `sync-verification-text ${ok ? "verified" : "mismatch"}`;
 }
 

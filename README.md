@@ -350,3 +350,16 @@ Run `SUPABASE_1.3.0_PATCH.sql` once before publishing.
 - TAKE OFF NOW gives immediate visual feedback while processing.
 - Clear error messages are shown if a queued flight is no longer available locally.
 - No Supabase SQL change is required.
+
+
+## Version 1.4.2 Ready Queue correction
+
+READY TO LAUNCH is now deliberately a local draft state.
+
+- SAVE TO READY QUEUE stores the prepared launch locally only.
+- Queued drafts are not uploaded to Supabase and therefore do not require a new database status.
+- TAKE OFF NOW converts the draft to an AIRBORNE flight, uploads it, then performs the full cloud verification.
+- Cloud reconciliation never deletes local queued drafts.
+- ONLINE · VERIFIED counts only official cloud/device flights; Ready drafts are shown separately.
+- Deleting a queued draft is local-only.
+- No Supabase SQL change is required.
