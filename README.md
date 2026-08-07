@@ -341,3 +341,12 @@ Run `SUPABASE_1.3.0_PATCH.sql` once before publishing.
 - Added manual SYNC NOW.
 - Status shows VERIFIED only after a full consistency check.
 - Master lists refresh during every cloud reconciliation.
+
+
+## Version 1.4.1 queue-button correction
+
+- SAVE TO READY QUEUE now calls the save workflow directly and no longer depends on requestSubmit().
+- TAKE OFF NOW uses robust delegated button detection.
+- TAKE OFF NOW gives immediate visual feedback while processing.
+- Clear error messages are shown if a queued flight is no longer available locally.
+- No Supabase SQL change is required.

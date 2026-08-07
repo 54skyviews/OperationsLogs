@@ -496,7 +496,15 @@ async function updateDashboard() {
 }
 async function takeOffQueuedFlight(id) {
   const flight = await get("flights", id);
-  if (!flight || flight.status !== "queued") return;
+  if (!flight) {
+    alert("QUEUED FLIGHT COULD NOT BE FOUND. PRESS SYNC NOW AND TRY AGAIN.");
+    return;
+  }
+  if (flight.status !== "queued") {
+    alert("THIS FLIGHT IS NO LONGER IN THE READY QUEUE.");
+    await updateDashboard();
+    return;
+  }
   const takeoff = timeHHMM();
   flight.takeoff = takeoff;
   flight.takeoffAt = hhmmToDate(flight.date, takeoff);
@@ -842,9 +850,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   $("winchFlightBtn").addEventListener("click", () => openEntry("winch"));
   $("aerotowFlightBtn").addEventListener("click", () => openEntry("aerotow"));
-  $("queueFlightBtn").addEventListener("click", () => {
+  $("queueFlightBtn").addEventListener("click", async event => {
+    event.preventDefault();
     queueSaveRequested = true;
-    $("flightForm").requestSubmit();
+    await saveFlight({ preventDefault() {} });
   });
   $("flightForm").addEventListener("submit", saveFlight);
   moveFocusWhenChosen("p1", "p2", DATA.names);
@@ -930,12 +939,34 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
   $("queuedList").addEventListener("click", async e => {
-    const takeoffId = e.target.dataset.queueTakeoff;
-    const editId = e.target.dataset.queueEdit;
-    const deleteId = e.target.dataset.queueDelete;
-    if (takeoffId) await takeOffQueuedFlight(takeoffId);
-    if (editId) await editFlight(editId);
-    if (deleteId && confirm("DELETE THIS QUEUED FLIGHT?")) {
+    const takeoffButton = e.target.closest("[data-queue-takeoff]");
+    const editButton = e.target.closest("[data-queue-edit]");
+    const deleteButton = e.target.closest("[data-queue-delete]");
+
+    if (takeoffButton) {
+      e.preventDefault();
+      takeoffButton.disabled = true;
+      takeoffButton.textContent = "TAKING OFF…";
+      try {
+        await takeOffQueuedFlight(takeoffButton.dataset.queueTakeoff);
+      } finally {
+        if (document.body.contains(takeoffButton)) {
+          takeoffButton.disabled = false;
+          takeoffButton.textContent = "TAKE OFF NOW";
+        }
+      }
+      return;
+    }
+
+    if (editButton) {
+      e.preventDefault();
+      await editFlight(editButton.dataset.queueEdit);
+      return;
+    }
+
+    if (deleteButton && confirm("DELETE THIS QUEUED FLIGHT?")) {
+      e.preventDefault();
+      const deleteId = deleteButton.dataset.queueDelete;
       await removeFlight(deleteId);
       await queueSyncRecord("flight", deleteId, "delete");
       await updateDashboard();
@@ -958,7 +989,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=140").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=141").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }
