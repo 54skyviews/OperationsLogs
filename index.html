@@ -12,14 +12,14 @@
   <link rel="apple-touch-icon" href="icon.svg">
   <meta name="description" content="Offline-first gliding club operations log">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=142">
+  <link rel="stylesheet" href="styles.css?v=143">
   <title>OperationsLogs</title>
 </head>
 <body>
   <header class="app-header">
     <div>
       <h1>OperationsLogs</h1>
-      <p>Gliding operations log <span id="appVersion">v1.4.2</span></p>
+      <p>Gliding operations log <span id="appVersion">v1.4.3</span></p>
     </div>
     <div id="statusBadge" class="status offline">OFFLINE READY</div>
   </header>
@@ -121,6 +121,10 @@
               <button type="button" class="now-button" data-time-target="landing">LAND NOW</button>
             </label>
           </div>
+          <div class="form-action-row flight-save-actions">
+            <button type="button" id="queueFlightBtn" class="secondary">SAVE TO READY QUEUE</button>
+            <button type="submit" id="saveFlightBtn" class="primary">SAVE AS AIRBORNE</button>
+          </div>
 
           <label>Total minutes<input id="duration" readonly></label>
           <label>Remarks / voucher number<textarea id="remarks" class="uppercase" rows="3"></textarea></label>
@@ -128,10 +132,7 @@
           <label>Office use<input id="officeUse" class="uppercase"></label>
 
           <div id="formMessage" class="form-message"></div>
-          <div class="form-action-row">
-            <button type="button" id="queueFlightBtn" class="secondary">SAVE TO READY QUEUE</button>
-            <button type="submit" id="saveFlightBtn" class="primary">SAVE AS AIRBORNE</button>
-          </div>
+
         </form>
       </div>
     </section>
@@ -220,9 +221,9 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="supabase-config.js?v=142"></script>
-  <script src="sync.js?v=142"></script>
-  <script src="data.js?v=142"></script>
-  <script src="app.js?v=142"></script>
+  <script src="supabase-config.js?v=143"></script>
+  <script src="sync.js?v=143"></script>
+  <script src="data.js?v=143"></script>
+  <script src="app.js?v=143"></script>
 </body>
 </html>

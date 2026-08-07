@@ -363,3 +363,11 @@ READY TO LAUNCH is now deliberately a local draft state.
 - ONLINE · VERIFIED counts only official cloud/device flights; Ready drafts are shown separately.
 - Deleting a queued draft is local-only.
 - No Supabase SQL change is required.
+
+
+## Version 1.4.3 refinements
+
+- SOLO automatically sets Payee to P1.
+- If P1 changes while P2 is SOLO, Payee follows P1.
+- SAVE TO READY QUEUE and SAVE AS AIRBORNE are now directly below TAKE OFF NOW / LAND NOW.
+- No Supabase SQL change is required.

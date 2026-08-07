@@ -330,6 +330,7 @@ async function saveFlight(e) {
     if (isSolo) {
       p2Value = "SOLO";
       $("p2").value = "SOLO";
+      $("payee").value = upper($("p1").value);
     } else {
       $("p2").focus();
       $("formMessage").textContent = "ENTER P2 OR SELECT SOLO.";
@@ -863,6 +864,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   $("winchFlightBtn").addEventListener("click", () => openEntry("winch"));
   $("aerotowFlightBtn").addEventListener("click", () => openEntry("aerotow"));
+  $("p2").addEventListener("change", () => {
+    if (upper($("p2").value) === "SOLO") $("payee").value = upper($("p1").value);
+  });
+  $("p1").addEventListener("change", () => {
+    if (upper($("p2").value) === "SOLO") $("payee").value = upper($("p1").value);
+  });
+
   $("queueFlightBtn").addEventListener("click", async event => {
     event.preventDefault();
     queueSaveRequested = true;
@@ -1002,7 +1010,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=142").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=143").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }
