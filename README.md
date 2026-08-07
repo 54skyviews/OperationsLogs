@@ -371,3 +371,16 @@ READY TO LAUNCH is now deliberately a local draft state.
 - If P1 changes while P2 is SOLO, Payee follows P1.
 - SAVE TO READY QUEUE and SAVE AS AIRBORNE are now directly below TAKE OFF NOW / LAND NOW.
 - No Supabase SQL change is required.
+
+
+## Version 1.4.4 cross-device landing safety
+
+- SOLO Payee is the literal value `P1`.
+- A cloud COMPLETED record now overrides an older local AIRBORNE copy.
+- A local COMPLETED record is still protected from an older AIRBORNE cloud copy.
+- Normal full-day reconciliation never deletes a flight solely because one cloud read omitted it.
+- Such omissions are reported as DATA MISMATCH instead.
+- Explicit user deletes and Realtime DELETE events still remove flights normally.
+- Landing now uploads immediately before the full verification check.
+- A flight Realtime event schedules an immediate full verification.
+- No Supabase SQL change is required.

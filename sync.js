@@ -491,6 +491,7 @@ async function applyRemoteFlight(row) {
     const localTime = new Date(local?.pendingModifiedAt || local?.modifiedAt || 0).getTime();
     const remoteMatchesLocal =
       row.status === local?.status &&
+      (row.takeoff || "") === (local?.takeoff || "") &&
       (row.landing || "") === (local?.landing || "") &&
       Number(row.duration || 0) === Number(local?.duration || 0);
 
@@ -503,13 +504,33 @@ async function applyRemoteFlight(row) {
       return;
     }
 
+    // A completed cloud record must replace an older local airborne copy.
+    // This is the normal cross-device landing case.
+    if (local?.status === "airborne" && row.status === "completed") {
+      const completed = localFlightFromRemote(row);
+      completed.syncStatus = "synced";
+      completed.pendingModifiedAt = null;
+      await put("flights", completed);
+      if (pendingQueueItem) await removeQueueItem(pendingQueueItem.id);
+      return;
+    }
+
+    // Do not let an older airborne cloud copy undo a local completed landing.
     if (local?.status === "completed" && row.status === "airborne") {
       return;
     }
 
-    if (remoteTime <= localTime || !remoteMatchesLocal) {
+    // For other genuine conflicts, newer modification wins.
+    if (remoteTime > localTime) {
+      const newerRemote = localFlightFromRemote(row);
+      newerRemote.syncStatus = "synced";
+      newerRemote.pendingModifiedAt = null;
+      await put("flights", newerRemote);
+      if (pendingQueueItem) await removeQueueItem(pendingQueueItem.id);
       return;
     }
+
+    return;
   }
 
   await put("flights", localFlightFromRemote(row));
@@ -527,15 +548,12 @@ async function reconcileFlightsForDate(date) {
   for (const row of cloudRows) await applyRemoteFlight(row);
 
   const localRows = await getFlightsByDate(date);
-  for (const local of localRows) {
-    if (local.status === "queued") continue; // local draft: never remove during cloud reconciliation
-    const pending = await get("syncQueue", `flight:${local.id}`);
-    if (!cloudIds.has(local.id) && !pending && local.syncStatus !== "pending") {
-      await removeFlight(local.id);
-    }
-  }
 
-  const repairedLocal = await getFlightsByDate(date);
+  // Safety rule: a normal reconciliation never deletes operational flights.
+  // Deletion is accepted only from an explicit Supabase Realtime DELETE event
+  // or from the user's DELETE action. A missing row in one cloud read is
+  // reported as a mismatch instead of destroying the local copy.
+  const repairedLocal = localRows;
   const operationalLocal = repairedLocal.filter(local => local.status !== "queued");
   const cloudById = new Map(cloudRows.map(row => [row.id, row]));
   let mismatches = 0;
@@ -547,6 +565,11 @@ async function reconcileFlightsForDate(date) {
     if ((local.status || "") !== (remote.status || "") ||
         (local.takeoff || "") !== (remote.takeoff || "") ||
         (local.landing || "") !== (remote.landing || "")) mismatches++;
+  }
+
+  const localIds = new Set(operationalLocal.map(local => local.id));
+  for (const remote of cloudRows) {
+    if (!localIds.has(remote.id)) mismatches++;
   }
 
   lastVerification = {
@@ -752,6 +775,7 @@ function subscribeRealtime() {
       }
       await updateDashboard();
       if (document.getElementById("reviewView")?.classList.contains("active")) await reviewFlights();
+      setTimeout(() => reconcileCloudState("flight realtime"), 300);
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "master_lists" }, async () => {
       await pullMasterLists();

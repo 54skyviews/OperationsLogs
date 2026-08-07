@@ -330,7 +330,7 @@ async function saveFlight(e) {
     if (isSolo) {
       p2Value = "SOLO";
       $("p2").value = "SOLO";
-      $("payee").value = upper($("p1").value);
+      $("payee").value = "P1";
     } else {
       $("p2").focus();
       $("formMessage").textContent = "ENTER P2 OR SELECT SOLO.";
@@ -552,7 +552,9 @@ async function landFlight(id, landingTime) {
   await queueSyncRecord("flight", id, "upsert");
   await updateDashboard();
   if (navigator.onLine && currentDevice?.approved) {
-    setTimeout(() => reconcileCloudState("landing saved"), 500);
+    await processSyncQueue();
+    await reconcileCloudState("landing saved");
+    await updateDashboard();
   }
 }
 
@@ -865,10 +867,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("winchFlightBtn").addEventListener("click", () => openEntry("winch"));
   $("aerotowFlightBtn").addEventListener("click", () => openEntry("aerotow"));
   $("p2").addEventListener("change", () => {
-    if (upper($("p2").value) === "SOLO") $("payee").value = upper($("p1").value);
+    if (upper($("p2").value) === "SOLO") $("payee").value = "P1";
   });
   $("p1").addEventListener("change", () => {
-    if (upper($("p2").value) === "SOLO") $("payee").value = upper($("p1").value);
+    if (upper($("p2").value) === "SOLO") $("payee").value = "P1";
   });
 
   $("queueFlightBtn").addEventListener("click", async event => {
@@ -1010,7 +1012,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("offline", updateConnection);
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js?v=143").catch(error => {
+    navigator.serviceWorker.register("service-worker.js?v=144").catch(error => {
       console.warn("Service worker registration failed:", error);
     });
   }
