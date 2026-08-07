@@ -407,3 +407,25 @@ Temporary diagnostic build only.
 - Network/fetch, authentication, response-read and JSON-parse errors are identified separately.
 - The top status banner includes a shortened exact error message.
 - No Supabase SQL change is required.
+
+
+## Version 1.4.6 cloud-read correction
+
+The v1.4.5a diagnostic identified HTTP 400 / PGRST100 from the direct REST flight read.
+
+Cause:
+- the cache-busting query parameter `&_=<timestamp>` was interpreted by PostgREST
+  as a filter on a column named `_`.
+
+Correction:
+- removed the invalid query parameter;
+- retained browser `cache: no-store`;
+- retained `Cache-Control: no-cache, no-store, max-age=0`;
+- retained `Pragma: no-cache`;
+- retained the authoritative direct authenticated REST read;
+- removed the temporary cloud diagnostic panel.
+
+TAKE OFF NOW is intentionally unchanged in this release so the cloud fix can be
+tested independently.
+
+No Supabase SQL change is required.
